@@ -19,13 +19,12 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "*",  # TODO: restrict back to specific origins after CORS confirmed working
         "http://localhost:3000",
         "https://vigilia.com.br",
         "https://frontend-bice-two-19.vercel.app",
         "https://plataforma-vigilia.vercel.app",
     ],
-    allow_credentials=False,  # must be False when allow_origins=["*"]
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
