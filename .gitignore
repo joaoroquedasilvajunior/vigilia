@@ -1,0 +1,34 @@
+# Bulk SQL import artefacts (generated, not source)
+bills_chunk_*
+bills_line_*
+bills_remaining.sql
+
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Env files
+.env
+.env.*
+
+# Node
+node_modules/
+.next/
+
+# Supabase CLI temp files
+backend/supabase/.temp/
+
+# Vercel local config
+.vercel/
+
+# GitHub Actions (add separately)

@@ -1,0 +1,43 @@
+name: Daily Legislative Sync
+
+on:
+  schedule:
+    # 03:00 BRT = 06:00 UTC
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      days_back:
+        description: "Days of bills to sync"
+        default: "2"
+        required: false
+
+jobs:
+  sync:
+    name: Sync Câmara data
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Trigger legislators sync
+        run: |
+          curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${{ secrets.API_BASE_URL }}/api/v1/sync/legislators" \
+            -H "x-sync-secret: ${{ secrets.SYNC_SECRET }}" \
+            | grep -q "200" && echo "legislators: queued" || echo "legislators: failed"
+
+      - name: Trigger bills sync
+        run: |
+          DAYS="${{ github.event.inputs.days_back || '2' }}"
+          curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${{ secrets.API_BASE_URL }}/api/v1/sync/bills?days_back=${DAYS}" \
+            -H "x-sync-secret: ${{ secrets.SYNC_SECRET }}" \
+            | grep -q "200" && echo "bills: queued" || echo "bills: failed"
+
+      - name: Wait for sync to settle
+        run: sleep 60
+
+      - name: Health check
+        run: |
+          STATUS=$(curl -s "${{ secrets.API_BASE_URL }}/health" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+          echo "API status: $STATUS"
+          test "$STATUS" = "ok"

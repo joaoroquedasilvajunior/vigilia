@@ -1,0 +1,1562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Farol — Architecture & Design Document</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap');
+
+  :root {
+    --verde: #00C45A;
+    --amarelo: #FFD100;
+    --azul: #0033A0;
+    --vermelho: #CC0000;
+    --cinza-escuro: #0F0F12;
+    --cinza-medio: #1A1A22;
+    --cinza-claro: #2A2A38;
+    --texto: #E8E8F0;
+    --texto-dim: #888899;
+    --borda: #2A2A38;
+    --fonte-display: 'Syne', sans-serif;
+    --fonte-mono: 'IBM Plex Mono', monospace;
+    --fonte-corpo: 'IBM Plex Sans', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--cinza-escuro);
+    color: var(--texto);
+    font-family: var(--fonte-corpo);
+    font-weight: 300;
+    line-height: 1.7;
+    font-size: 15px;
+  }
+
+  /* NAV */
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(15,15,18,0.95);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--borda);
+    padding: 0 2rem;
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    height: 52px;
+  }
+
+  .nav-logo {
+    font-family: var(--fonte-display);
+    font-weight: 800;
+    font-size: 1.1rem;
+    color: var(--verde);
+    letter-spacing: -0.02em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+  }
+
+  .nav-logo::before {
+    content: '◈';
+    color: var(--amarelo);
+  }
+
+  .nav-links {
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .nav-links a {
+    font-family: var(--fonte-mono);
+    font-size: 0.7rem;
+    color: var(--texto-dim);
+    text-decoration: none;
+    padding: 0 1rem;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    border-right: 1px solid var(--borda);
+    transition: color 0.2s, background 0.2s;
+    white-space: nowrap;
+  }
+
+  .nav-links a:hover { color: var(--verde); background: rgba(0,196,90,0.05); }
+  .nav-links a.active { color: var(--verde); }
+
+  /* HERO */
+  .hero {
+    padding: 5rem 2rem 4rem;
+    max-width: 1100px;
+    margin: 0 auto;
+    position: relative;
+  }
+
+  .hero-tag {
+    font-family: var(--fonte-mono);
+    font-size: 0.7rem;
+    color: var(--verde);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .hero-tag::before { content: '//'; color: var(--amarelo); }
+
+  h1 {
+    font-family: var(--fonte-display);
+    font-weight: 800;
+    font-size: clamp(2.5rem, 6vw, 4.5rem);
+    line-height: 1.05;
+    letter-spacing: -0.03em;
+    margin-bottom: 1.5rem;
+  }
+
+  h1 em {
+    font-style: normal;
+    color: var(--verde);
+  }
+
+  .hero-sub {
+    font-size: 1.05rem;
+    color: var(--texto-dim);
+    max-width: 640px;
+    margin-bottom: 3rem;
+  }
+
+  .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1px;
+    background: var(--borda);
+    border: 1px solid var(--borda);
+    margin-bottom: 4rem;
+  }
+
+  .meta-cell {
+    background: var(--cinza-medio);
+    padding: 1.25rem 1.5rem;
+  }
+
+  .meta-label {
+    font-family: var(--fonte-mono);
+    font-size: 0.65rem;
+    color: var(--texto-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.4rem;
+  }
+
+  .meta-value {
+    font-family: var(--fonte-display);
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: var(--verde);
+  }
+
+  /* SECTIONS */
+  .section {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 4rem 2rem;
+    border-top: 1px solid var(--borda);
+  }
+
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 3rem;
+  }
+
+  .section-num {
+    font-family: var(--fonte-mono);
+    font-size: 0.7rem;
+    color: var(--amarelo);
+    letter-spacing: 0.1em;
+  }
+
+  h2 {
+    font-family: var(--fonte-display);
+    font-weight: 700;
+    font-size: 1.8rem;
+    letter-spacing: -0.02em;
+  }
+
+  h3 {
+    font-family: var(--fonte-display);
+    font-weight: 600;
+    font-size: 1.1rem;
+    margin-bottom: 1rem;
+    color: var(--texto);
+  }
+
+  h4 {
+    font-family: var(--fonte-mono);
+    font-size: 0.75rem;
+    color: var(--verde);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.75rem;
+  }
+
+  p { margin-bottom: 1rem; color: var(--texto-dim); }
+  p strong { color: var(--texto); font-weight: 500; }
+
+  /* DATA MODEL */
+  .schema-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1px;
+    background: var(--borda);
+    border: 1px solid var(--borda);
+    margin-bottom: 2rem;
+  }
+
+  .schema-table {
+    background: var(--cinza-medio);
+    padding: 1.5rem;
+  }
+
+  .schema-table-name {
+    font-family: var(--fonte-display);
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--amarelo);
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .schema-table-name::before {
+    content: '▣';
+    font-size: 0.7rem;
+    color: var(--verde);
+  }
+
+  .field {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    gap: 1rem;
+  }
+
+  .field:last-child { border-bottom: none; }
+
+  .field-name {
+    font-family: var(--fonte-mono);
+    font-size: 0.72rem;
+    color: var(--texto);
+  }
+
+  .field-type {
+    font-family: var(--fonte-mono);
+    font-size: 0.65rem;
+    color: var(--texto-dim);
+    background: var(--cinza-claro);
+    padding: 0.15rem 0.4rem;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+
+  .field-type.pk { color: var(--amarelo); border: 1px solid rgba(255,209,0,0.3); }
+  .field-type.fk { color: var(--verde); border: 1px solid rgba(0,196,90,0.3); }
+  .field-type.idx { color: #7B8CDE; border: 1px solid rgba(123,140,222,0.3); }
+  .field-type.json { color: #FF8C42; border: 1px solid rgba(255,140,66,0.3); }
+
+  /* CODE */
+  .code-block {
+    background: var(--cinza-medio);
+    border: 1px solid var(--borda);
+    border-left: 3px solid var(--verde);
+    padding: 1.5rem;
+    margin: 1.5rem 0;
+    overflow-x: auto;
+    position: relative;
+  }
+
+  .code-block pre {
+    font-family: var(--fonte-mono);
+    font-size: 0.78rem;
+    line-height: 1.6;
+    color: var(--texto);
+  }
+
+  .code-label {
+    font-family: var(--fonte-mono);
+    font-size: 0.65rem;
+    color: var(--verde);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .code-label::before { content: '▶'; font-size: 0.5rem; }
+
+  .kw { color: #7B8CDE; }
+  .str { color: #98C379; }
+  .num { color: #E5C07B; }
+  .cmt { color: #4A4A6A; font-style: italic; }
+  .fn { color: #61AFEF; }
+  .cls { color: var(--amarelo); }
+  .op { color: var(--verde); }
+
+  /* SCORING */
+  .scoring-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--borda);
+    border: 1px solid var(--borda);
+    margin-bottom: 2rem;
+  }
+
+  @media (max-width: 700px) { .scoring-grid { grid-template-columns: 1fr; } }
+
+  .score-cell {
+    background: var(--cinza-medio);
+    padding: 1.5rem;
+  }
+
+  .score-title {
+    font-family: var(--fonte-display);
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .score-icon { font-size: 1rem; }
+
+  .score-bar-wrap {
+    background: var(--cinza-claro);
+    height: 4px;
+    border-radius: 2px;
+    margin: 1rem 0 0.5rem;
+    overflow: hidden;
+  }
+
+  .score-bar {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 1s ease;
+  }
+
+  .score-weight {
+    font-family: var(--fonte-mono);
+    font-size: 0.65rem;
+    color: var(--texto-dim);
+  }
+
+  /* ARTICLE MAP */
+  .article-map {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1px;
+    background: var(--borda);
+    border: 1px solid var(--borda);
+    margin-bottom: 2rem;
+  }
+
+  .article-cell {
+    background: var(--cinza-medio);
+    padding: 1rem 1.25rem;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .article-cell:hover { background: var(--cinza-claro); }
+
+  .article-num {
+    font-family: var(--fonte-mono);
+    font-size: 0.65rem;
+    color: var(--amarelo);
+    margin-bottom: 0.3rem;
+  }
+
+  .article-tema {
+    font-size: 0.82rem;
+    color: var(--texto);
+    font-weight: 400;
+    margin-bottom: 0.5rem;
+  }
+
+  .article-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .tag {
+    font-family: var(--fonte-mono);
+    font-size: 0.6rem;
+    padding: 2px 6px;
+    border-radius: 2px;
+    background: var(--cinza-claro);
+    color: var(--texto-dim);
+  }
+
+  .tag.labor { background: rgba(0,196,90,0.1); color: var(--verde); }
+  .tag.ambiental { background: rgba(0,140,255,0.1); color: #56B4F7; }
+  .tag.social { background: rgba(255,209,0,0.1); color: var(--amarelo); }
+  .tag.religiao { background: rgba(255,140,66,0.1); color: #FF8C42; }
+  .tag.propriedade { background: rgba(204,0,0,0.1); color: #FF6B6B; }
+  .tag.indigena { background: rgba(160,82,45,0.1); color: #C8855A; }
+
+  /* PIPELINE */
+  .pipeline {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    margin: 2rem 0;
+    overflow-x: auto;
+  }
+
+  .pipe-step {
+    flex: 1;
+    min-width: 140px;
+    background: var(--cinza-medio);
+    border: 1px solid var(--borda);
+    border-right: none;
+    padding: 1.25rem 1rem;
+    position: relative;
+  }
+
+  .pipe-step:last-child { border-right: 1px solid var(--borda); }
+
+  .pipe-step::after {
+    content: '→';
+    position: absolute;
+    right: -12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--verde);
+    font-size: 0.8rem;
+    z-index: 2;
+    background: var(--cinza-escuro);
+    padding: 2px 2px;
+  }
+
+  .pipe-step:last-child::after { display: none; }
+
+  .pipe-num {
+    font-family: var(--fonte-mono);
+    font-size: 0.6rem;
+    color: var(--verde);
+    margin-bottom: 0.5rem;
+  }
+
+  .pipe-label {
+    font-family: var(--fonte-display);
+    font-weight: 600;
+    font-size: 0.8rem;
+    margin-bottom: 0.4rem;
+  }
+
+  .pipe-detail {
+    font-size: 0.7rem;
+    color: var(--texto-dim);
+    line-height: 1.4;
+  }
+
+  /* GOVERNANCE */
+  .gov-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1px;
+    background: var(--borda);
+    border: 1px solid var(--borda);
+    margin-bottom: 2rem;
+  }
+
+  .gov-cell {
+    background: var(--cinza-medio);
+    padding: 1.75rem;
+  }
+
+  .gov-icon {
+    font-size: 1.5rem;
+    margin-bottom: 1rem;
+    display: block;
+  }
+
+  .risk-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.5rem 0;
+  }
+
+  .risk-table th {
+    font-family: var(--fonte-mono);
+    font-size: 0.65rem;
+    color: var(--verde);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    background: var(--cinza-claro);
+    border-bottom: 1px solid var(--borda);
+  }
+
+  .risk-table td {
+    font-size: 0.8rem;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--borda);
+    color: var(--texto-dim);
+    vertical-align: top;
+  }
+
+  .risk-table td:first-child { color: var(--texto); font-weight: 400; }
+
+  .badge {
+    display: inline-block;
+    font-family: var(--fonte-mono);
+    font-size: 0.6rem;
+    padding: 2px 8px;
+    border-radius: 2px;
+  }
+
+  .badge.alto { background: rgba(204,0,0,0.2); color: #FF6B6B; }
+  .badge.medio { background: rgba(255,209,0,0.15); color: var(--amarelo); }
+  .badge.baixo { background: rgba(0,196,90,0.15); color: var(--verde); }
+
+  /* PHASE TIMELINE */
+  .phases {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--borda);
+    border: 1px solid var(--borda);
+    margin-bottom: 2rem;
+  }
+
+  @media (max-width: 600px) { .phases { grid-template-columns: 1fr; } }
+
+  .phase {
+    background: var(--cinza-medio);
+    padding: 1.75rem;
+  }
+
+  .phase-label {
+    font-family: var(--fonte-mono);
+    font-size: 0.65rem;
+    color: var(--amarelo);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+
+  .phase-title {
+    font-family: var(--fonte-display);
+    font-weight: 700;
+    font-size: 1.05rem;
+    margin-bottom: 1rem;
+  }
+
+  .phase-items {
+    list-style: none;
+  }
+
+  .phase-items li {
+    font-size: 0.8rem;
+    color: var(--texto-dim);
+    padding: 0.3rem 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .phase-items li::before {
+    content: '—';
+    color: var(--verde);
+    flex-shrink: 0;
+  }
+
+  .phase-items li:last-child { border-bottom: none; }
+
+  /* FOOTER */
+  footer {
+    border-top: 1px solid var(--borda);
+    padding: 2rem;
+    text-align: center;
+    font-family: var(--fonte-mono);
+    font-size: 0.65rem;
+    color: var(--texto-dim);
+    letter-spacing: 0.08em;
+  }
+
+  .divider {
+    border: none;
+    border-top: 1px solid var(--borda);
+    margin: 2.5rem 0;
+  }
+
+  .nota {
+    background: rgba(0,196,90,0.06);
+    border: 1px solid rgba(0,196,90,0.2);
+    border-left: 3px solid var(--verde);
+    padding: 1rem 1.25rem;
+    margin: 1.5rem 0;
+    font-size: 0.82rem;
+    color: var(--texto-dim);
+  }
+
+  .nota strong { color: var(--verde); }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+    margin-bottom: 2rem;
+  }
+
+  @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+
+  .inset {
+    background: var(--cinza-medio);
+    border: 1px solid var(--borda);
+    padding: 1.5rem;
+    margin: 1.5rem 0;
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-logo">Farol</div>
+  <div class="nav-links">
+    <a href="#modelo">Modelo de Dados</a>
+    <a href="#api">API Integration</a>
+    <a href="#scoring">Scoring Constitucional</a>
+    <a href="#governanca">Governança</a>
+    <a href="#roadmap">Roadmap</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <div class="hero-tag">Documento de Arquitetura — v0.1</div>
+  <h1>Farol<br><em>Transparência Legislativa</em><br>para o Brasil</h1>
+  <p class="hero-sub">
+    Um sistema público de monitoramento e análise comportamental do Congresso Nacional brasileiro,
+    baseado em dados abertos, inteligência artificial e metodologia constitucional auditável.
+  </p>
+  <div class="meta-grid">
+    <div class="meta-cell">
+      <div class="meta-label">Tipo</div>
+      <div class="meta-value">Infra cívica aberta</div>
+    </div>
+    <div class="meta-cell">
+      <div class="meta-label">Stack</div>
+      <div class="meta-value">Next.js + Postgres + Claude</div>
+    </div>
+    <div class="meta-cell">
+      <div class="meta-label">Fontes</div>
+      <div class="meta-value">Câmara · Senado · TSE · STF</div>
+    </div>
+    <div class="meta-cell">
+      <div class="meta-label">Licença proposta</div>
+      <div class="meta-value">AGPL-3.0</div>
+    </div>
+    <div class="meta-cell">
+      <div class="meta-label">Constituição</div>
+      <div class="meta-value">CF/88 como âncora normativa</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     SEÇÃO 1 — MODELO DE DADOS
+═══════════════════════════════════════════════════════ -->
+<section class="section" id="modelo">
+  <div class="section-header">
+    <span class="section-num">01</span>
+    <h2>Modelo de Dados</h2>
+  </div>
+
+  <p>O modelo segmenta dados em três domínios: <strong>Atores</strong> (legisladores, partidos, financiadores),
+  <strong>Atos</strong> (proposições, votações, votos individuais), e <strong>Análise</strong>
+  (tags temáticas, scores constitucionais, clustering comportamental).
+  Esta separação permite atualização incremental e rastreabilidade por camada.</p>
+
+  <div class="nota">
+    <strong>Decisão de design:</strong> partidos são tratados como metadados do legislador em um momento no tempo,
+    não como entidade organizadora central. Isso reflete a realidade brasileira de migração partidária frequente
+    e permite que o sistema agrupe deputados por comportamento real, não por legenda.
+  </div>
+
+  <h3>Domínio 1 — Atores</h3>
+  <div class="schema-grid">
+    <div class="schema-table">
+      <div class="schema-table-name">legisladores</div>
+      <div class="field"><span class="field-name">id</span><span class="field-type pk">PK · bigint</span></div>
+      <div class="field"><span class="field-name">id_camara_api</span><span class="field-type idx">IDX · int</span></div>
+      <div class="field"><span class="field-name">id_senado_api</span><span class="field-type idx">IDX · int</span></div>
+      <div class="field"><span class="field-name">nome_completo</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">nome_civil</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">casa</span><span class="field-type">enum(camara,senado)</span></div>
+      <div class="field"><span class="field-name">uf</span><span class="field-type">char(2)</span></div>
+      <div class="field"><span class="field-name">genero</span><span class="field-type">char(1)</span></div>
+      <div class="field"><span class="field-name">escolaridade</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">profissao_declarada</span><span class="field-type">text[]</span></div>
+      <div class="field"><span class="field-name">patrimonio_declarado</span><span class="field-type">numeric</span></div>
+      <div class="field"><span class="field-name">foto_url</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">mandatos</span><span class="field-type json">JSONB[]</span></div>
+      <div class="field"><span class="field-name">atualizado_em</span><span class="field-type">timestamptz</span></div>
+    </div>
+
+    <div class="schema-table">
+      <div class="schema-table-name">filiações_partidárias</div>
+      <div class="field"><span class="field-name">id</span><span class="field-type pk">PK · bigint</span></div>
+      <div class="field"><span class="field-name">legislador_id</span><span class="field-type fk">FK → legisladores</span></div>
+      <div class="field"><span class="field-name">partido_sigla</span><span class="field-type">char(10)</span></div>
+      <div class="field"><span class="field-name">partido_nome</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">inicio</span><span class="field-type">date</span></div>
+      <div class="field"><span class="field-name">fim</span><span class="field-type">date · nullable</span></div>
+      <div class="field"><span class="field-name">legislatura</span><span class="field-type">smallint</span></div>
+    </div>
+
+    <div class="schema-table">
+      <div class="schema-table-name">financiamentos_tse</div>
+      <div class="field"><span class="field-name">id</span><span class="field-type pk">PK · bigint</span></div>
+      <div class="field"><span class="field-name">legislador_id</span><span class="field-type fk">FK → legisladores</span></div>
+      <div class="field"><span class="field-name">ano_eleicao</span><span class="field-type">smallint</span></div>
+      <div class="field"><span class="field-name">doador_nome</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">doador_cnpj_cpf</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">setor_cnae</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">setor_normalizado</span><span class="field-type idx">IDX · text</span></div>
+      <div class="field"><span class="field-name">valor</span><span class="field-type">numeric</span></div>
+      <div class="field"><span class="field-name">tipo</span><span class="field-type">enum(PJ,PF,fundo_partidário)</span></div>
+    </div>
+
+    <div class="schema-table">
+      <div class="schema-table-name">clusters_comportamentais</div>
+      <div class="field"><span class="field-name">id</span><span class="field-type pk">PK · bigint</span></div>
+      <div class="field"><span class="field-name">legislador_id</span><span class="field-type fk">FK → legisladores</span></div>
+      <div class="field"><span class="field-name">legislatura</span><span class="field-type">smallint</span></div>
+      <div class="field"><span class="field-name">cluster_id</span><span class="field-type idx">IDX · int</span></div>
+      <div class="field"><span class="field-name">cluster_label</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">distancia_centroide</span><span class="field-type">float</span></div>
+      <div class="field"><span class="field-name">vetor_embedding</span><span class="field-type json">vector(512)</span></div>
+      <div class="field"><span class="field-name">calculado_em</span><span class="field-type">timestamptz</span></div>
+    </div>
+  </div>
+
+  <h3>Domínio 2 — Atos Legislativos</h3>
+  <div class="schema-grid">
+    <div class="schema-table">
+      <div class="schema-table-name">proposições</div>
+      <div class="field"><span class="field-name">id</span><span class="field-type pk">PK · bigint</span></div>
+      <div class="field"><span class="field-name">id_camara_api</span><span class="field-type idx">IDX · int</span></div>
+      <div class="field"><span class="field-name">sigle_tipo</span><span class="field-type">text · ex: PEC, PL, MPV</span></div>
+      <div class="field"><span class="field-name">numero</span><span class="field-type">int</span></div>
+      <div class="field"><span class="field-name">ano</span><span class="field-type">smallint</span></div>
+      <div class="field"><span class="field-name">ementa</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">ementa_detalhada</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">texto_completo_url</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">texto_completo_hash</span><span class="field-type">char(64)</span></div>
+      <div class="field"><span class="field-name">status</span><span class="field-type">enum(tramitando,aprovado,rejeitado,arquivado)</span></div>
+      <div class="field"><span class="field-name">autores</span><span class="field-type json">JSONB[]</span></div>
+      <div class="field"><span class="field-name">temas_camara</span><span class="field-type">text[]</span></div>
+      <div class="field"><span class="field-name">temas_farol</span><span class="field-type idx">IDX · text[]</span></div>
+      <div class="field"><span class="field-name">score_constitucional</span><span class="field-type fk">→ scores_cf88</span></div>
+    </div>
+
+    <div class="schema-table">
+      <div class="schema-table-name">votações</div>
+      <div class="field"><span class="field-name">id</span><span class="field-type pk">PK · bigint</span></div>
+      <div class="field"><span class="field-name">id_camara_api</span><span class="field-type idx">IDX · text</span></div>
+      <div class="field"><span class="field-name">proposicao_id</span><span class="field-type fk">FK → proposições</span></div>
+      <div class="field"><span class="field-name">data</span><span class="field-type idx">IDX · date</span></div>
+      <div class="field"><span class="field-name">descricao</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">resultado</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">placar</span><span class="field-type json">JSONB · {sim,nao,abstencao}</span></div>
+      <div class="field"><span class="field-name">tipo</span><span class="field-type">enum(nominal,secreta,artigo)</span></div>
+      <div class="field"><span class="field-name">sessao</span><span class="field-type">text</span></div>
+    </div>
+
+    <div class="schema-table">
+      <div class="schema-table-name">votos_individuais</div>
+      <div class="field"><span class="field-name">id</span><span class="field-type pk">PK · bigint</span></div>
+      <div class="field"><span class="field-name">votacao_id</span><span class="field-type fk">FK → votações</span></div>
+      <div class="field"><span class="field-name">legislador_id</span><span class="field-type fk">FK → legisladores</span></div>
+      <div class="field"><span class="field-name">voto</span><span class="field-type idx">IDX · enum(Sim,Nao,Abstencao,Obstrucao,Ausente)</span></div>
+      <div class="field"><span class="field-name">partido_no_momento</span><span class="field-type">char(10)</span></div>
+      <div class="field"><span class="field-name">orientacao_bancada</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">divergiu_bancada</span><span class="field-type idx">boolean</span></div>
+    </div>
+
+    <div class="schema-table">
+      <div class="schema-table-name">scores_cf88</div>
+      <div class="field"><span class="field-name">id</span><span class="field-type pk">PK · bigint</span></div>
+      <div class="field"><span class="field-name">proposicao_id</span><span class="field-type fk">FK → proposições</span></div>
+      <div class="field"><span class="field-name">score_geral</span><span class="field-type">float · 0.0–1.0</span></div>
+      <div class="field"><span class="field-name">nivel_risco</span><span class="field-type idx">enum(baixo,medio,alto,critico)</span></div>
+      <div class="field"><span class="field-name">artigos_relevantes</span><span class="field-type json">JSONB[]</span></div>
+      <div class="field"><span class="field-name">justificativa_ia</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">justificativa_expert</span><span class="field-type">text · nullable</span></div>
+      <div class="field"><span class="field-name">revisado_por_expert</span><span class="field-type idx">boolean</span></div>
+      <div class="field"><span class="field-name">precedentes_stf</span><span class="field-type json">JSONB[]</span></div>
+      <div class="field"><span class="field-name">modelo_versao</span><span class="field-type">text</span></div>
+      <div class="field"><span class="field-name">calculado_em</span><span class="field-type">timestamptz</span></div>
+    </div>
+  </div>
+
+  <h3>Relações-chave</h3>
+  <div class="code-block">
+    <div class="code-label">SQL — índices críticos para performance</div>
+    <pre>
+<span class="cmt">-- Recuperar todos os votos de um legislador por tema</span>
+<span class="kw">CREATE INDEX</span> <span class="fn">idx_votos_legislador_tema</span>
+<span class="kw">ON</span> <span class="cls">votos_individuais</span>(legislador_id)
+<span class="kw">INCLUDE</span> (votacao_id, voto, divergiu_bancada);
+
+<span class="cmt">-- Busca por risco constitucional + tema</span>
+<span class="kw">CREATE INDEX</span> <span class="fn">idx_proposicoes_risco_tema</span>
+<span class="kw">ON</span> <span class="cls">proposicoes</span> <span class="kw">USING</span> GIN (temas_farol)
+<span class="kw">WHERE</span> score_constitucional IS NOT NULL;
+
+<span class="cmt">-- Correlação financiamento × setor × voto</span>
+<span class="kw">CREATE INDEX</span> <span class="fn">idx_financiamento_setor</span>
+<span class="kw">ON</span> <span class="cls">financiamentos_tse</span>(legislador_id, setor_normalizado);
+
+<span class="cmt">-- Busca vetorial para clustering (requer pgvector)</span>
+<span class="kw">CREATE INDEX</span> <span class="fn">idx_cluster_embedding</span>
+<span class="kw">ON</span> <span class="cls">clusters_comportamentais</span>
+<span class="kw">USING</span> ivfflat (vetor_embedding vector_cosine_ops)
+<span class="kw">WITH</span> (lists = <span class="num">100</span>);</pre>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     SEÇÃO 2 — API INTEGRATION
+═══════════════════════════════════════════════════════ -->
+<section class="section" id="api">
+  <div class="section-header">
+    <span class="section-num">02</span>
+    <h2>Camada de Integração de APIs</h2>
+  </div>
+
+  <p>O Brasil tem um ecossistema de dados abertos razoavelmente robusto.
+  O desafio não é acesso — é <strong>normalização, confiabilidade e frequência de atualização</strong>.
+  A arquitetura proposta usa um padrão de <em>ingestion pipeline</em> com checksum-based delta sync,
+  de modo que apenas dados novos ou modificados são processados.</p>
+
+  <h3>Fontes e Endpoints Primários</h3>
+
+  <div class="pipeline">
+    <div class="pipe-step">
+      <div class="pipe-num">FONTE 01</div>
+      <div class="pipe-label">Câmara API v2</div>
+      <div class="pipe-detail">dadosabertos.camara.leg.br<br>REST/JSON · sem auth<br>Deputados, votações, proposições</div>
+    </div>
+    <div class="pipe-step">
+      <div class="pipe-num">FONTE 02</div>
+      <div class="pipe-label">Senado Transparente</div>
+      <div class="pipe-detail">legis.senado.leg.br<br>REST/JSON + XML<br>Senadores, votações, comissões</div>
+    </div>
+    <div class="pipe-step">
+      <div class="pipe-num">FONTE 03</div>
+      <div class="pipe-label">TSE Dados</div>
+      <div class="pipe-detail">dadosabertos.tse.jus.br<br>CSV bulk download<br>Financiamento eleitoral</div>
+    </div>
+    <div class="pipe-step">
+      <div class="pipe-num">FONTE 04</div>
+      <div class="pipe-label">STF Jurisprudência</div>
+      <div class="pipe-detail">portal.stf.jus.br<br>REST + scraping<br>ADIs, decisões, inconstitucionalidades</div>
+    </div>
+    <div class="pipe-step">
+      <div class="pipe-num">FONTE 05</div>
+      <div class="pipe-label">DOU / Lexml</div>
+      <div class="pipe-detail">www.lexml.gov.br<br>OAI-PMH + REST<br>Texto completo de leis promulgadas</div>
+    </div>
+  </div>
+
+  <h3>Módulo de Sincronização — Câmara</h3>
+  <div class="code-block">
+    <div class="code-label">TypeScript — CamaraSync client</div>
+    <pre>
+<span class="kw">const</span> CAMARA_BASE = <span class="str">'https://dadosabertos.camara.leg.br/api/v2'</span>;
+
+<span class="cmt">// Tipos core que espelham a API da Câmara</span>
+<span class="kw">interface</span> <span class="cls">DeputadoSummary</span> {
+  id: <span class="cls">number</span>;
+  nome: <span class="cls">string</span>;
+  siglaPartido: <span class="cls">string</span>;
+  siglaUf: <span class="cls">string</span>;
+  idLegislatura: <span class="cls">number</span>;
+  urlFoto: <span class="cls">string</span>;
+  email: <span class="cls">string</span>;
+}
+
+<span class="kw">interface</span> <span class="cls">VotacaoDetalhada</span> {
+  id: <span class="cls">string</span>;
+  data: <span class="cls">string</span>;
+  dataHoraRegistro: <span class="cls">string</span>;
+  siglaOrgao: <span class="cls">string</span>;
+  uriEvento: <span class="cls">string</span>;
+  proposicaoObjeto: <span class="cls">string</span>;
+  tipoVotacao: <span class="cls">string</span>;
+  aprovacao: <span class="cls">number</span>;
+}
+
+<span class="cmt">// Cliente com retry exponencial e rate-limit awareness</span>
+<span class="kw">class</span> <span class="cls">CamaraClient</span> {
+  <span class="kw">private</span> rateLimiter = <span class="kw">new</span> <span class="fn">RateLimiter</span>({ rpm: <span class="num">30</span> }); <span class="cmt">// conservador</span>
+
+  <span class="kw">async</span> <span class="fn">fetchPaginated</span>&lt;T&gt;(
+    endpoint: <span class="cls">string</span>,
+    params: <span class="cls">Record</span>&lt;<span class="cls">string</span>, <span class="cls">string</span>&gt; = {}
+  ): <span class="cls">Promise</span>&lt;T[]&gt; {
+    <span class="kw">const</span> results: T[] = [];
+    <span class="kw">let</span> pagina = <span class="num">1</span>;
+    <span class="kw">const</span> itensPorPagina = <span class="num">100</span>; <span class="cmt">// máximo da API</span>
+
+    <span class="kw">while</span> (<span class="kw">true</span>) {
+      <span class="kw">await</span> <span class="kw">this</span>.rateLimiter.<span class="fn">wait</span>();
+
+      <span class="kw">const</span> url = <span class="kw">new</span> <span class="cls">URL</span>(<span class="str">`<span class="op">${</span>CAMARA_BASE<span class="op">}${</span>endpoint<span class="op">}</span>`</span>);
+      url.searchParams.<span class="fn">set</span>(<span class="str">'pagina'</span>, String(pagina));
+      url.searchParams.<span class="fn">set</span>(<span class="str">'itens'</span>, String(itensPorPagina));
+      <span class="cls">Object</span>.<span class="fn">entries</span>(params).<span class="fn">forEach</span>(([k, v]) =>
+        url.searchParams.<span class="fn">set</span>(k, v)
+      );
+
+      <span class="kw">const</span> res = <span class="kw">await</span> <span class="fn">fetchWithRetry</span>(url.<span class="fn">toString</span>(), {
+        maxRetries: <span class="num">3</span>,
+        backoff: <span class="str">'exponential'</span>
+      });
+
+      <span class="kw">const</span> json = <span class="kw">await</span> res.<span class="fn">json</span>();
+      <span class="kw">if</span> (!json.dados?.length) <span class="kw">break</span>;
+
+      results.<span class="fn">push</span>(...json.dados);
+      <span class="kw">if</span> (json.dados.length < itensPorPagina) <span class="kw">break</span>; <span class="cmt">// última página</span>
+      pagina++;
+    }
+    <span class="kw">return</span> results;
+  }
+
+  <span class="cmt">// Busca votos de uma votação específica com deputado expandido</span>
+  <span class="kw">async</span> <span class="fn">getVotosDeVotacao</span>(votacaoId: <span class="cls">string</span>) {
+    <span class="kw">return</span> <span class="kw">this</span>.<span class="fn">fetchPaginated</span>(
+      <span class="str">`/votacoes/<span class="op">${</span>votacaoId<span class="op">}</span>/votos`</span>
+    );
+  }
+
+  <span class="cmt">// Busca proposições com filtro de data para delta sync</span>
+  <span class="kw">async</span> <span class="fn">getProposicoesDesde</span>(dataInicio: <span class="cls">Date</span>) {
+    <span class="kw">return</span> <span class="kw">this</span>.<span class="fn">fetchPaginated</span>(<span class="str">'/proposicoes'</span>, {
+      dataInicio: dataInicio.<span class="fn">toISOString</span>().<span class="fn">slice</span>(<span class="num">0</span>, <span class="num">10</span>),
+      ordem: <span class="str">'ASC'</span>,
+      ordenarPor: <span class="str">'id'</span>
+    });
+  }
+}
+
+<span class="cmt">// Pipeline de ingestão com detecção de mudanças</span>
+<span class="kw">async function</span> <span class="fn">syncVotacoesDelta</span>(db: <span class="cls">Database</span>) {
+  <span class="kw">const</span> ultimaSync = <span class="kw">await</span> db.<span class="fn">query</span>(
+    <span class="str">'SELECT MAX(data) FROM votacoes'</span>
+  );
+  <span class="kw">const</span> desde = ultimaSync.rows[<span class="num">0</span>].max ?? <span class="kw">new</span> <span class="cls">Date</span>(<span class="str">'2023-01-01'</span>);
+
+  <span class="kw">const</span> client = <span class="kw">new</span> <span class="cls">CamaraClient</span>();
+  <span class="kw">const</span> votacoes = <span class="kw">await</span> client.<span class="fn">fetchPaginated</span>(<span class="str">'/votacoes'</span>, {
+    dataInicio: desde.<span class="fn">toISOString</span>().<span class="fn">slice</span>(<span class="num">0</span>, <span class="num">10</span>)
+  });
+
+  <span class="kw">for</span> (<span class="kw">const</span> votacao <span class="kw">of</span> votacoes) {
+    <span class="kw">const</span> votos = <span class="kw">await</span> client.<span class="fn">getVotosDeVotacao</span>(votacao.id);
+
+    <span class="kw">await</span> db.<span class="fn">transaction</span>(<span class="kw">async</span> (tx) => {
+      <span class="kw">await</span> tx.<span class="fn">upsert</span>(<span class="str">'votacoes'</span>, votacao, { onConflict: <span class="str">'id_camara_api'</span> });
+      <span class="kw">await</span> tx.<span class="fn">batchInsert</span>(<span class="str">'votos_individuais'</span>, votos.<span class="fn">map</span>(<span class="fn">normalizeVoto</span>));
+    });
+
+    <span class="cmt">// Enqueue análise constitucional se proposição nova</span>
+    <span class="kw">if</span> (votacao.proposicaoObjeto) {
+      <span class="kw">await</span> queue.<span class="fn">enqueue</span>(<span class="str">'score-constitucional'</span>, {
+        proposicaoId: votacao.proposicaoObjeto
+      });
+    }
+  }
+}</pre>
+  </div>
+
+  <h3>Normalização de Setores Econômicos (TSE → Farol)</h3>
+  <div class="code-block">
+    <div class="code-label">TypeScript — mapeamento CNAE → setor de influência</div>
+    <pre>
+<span class="cmt">// Os dados do TSE usam CNAE; precisamos mapear para setores
+// politicamente relevantes de forma legível ao público</span>
+
+<span class="kw">const</span> SETOR_MAP: <span class="cls">Record</span>&lt;<span class="cls">string</span>, <span class="cls">string</span>&gt; = {
+  <span class="cmt">// Agronegócio</span>
+  <span class="str">'01'</span>: <span class="str">'agronegocio'</span>,  <span class="cmt">// Agricultura</span>
+  <span class="str">'02'</span>: <span class="str">'agronegocio'</span>,  <span class="cmt">// Silvicultura</span>
+  <span class="str">'03'</span>: <span class="str">'agronegocio'</span>,  <span class="cmt">// Pesca</span>
+  <span class="str">'10'</span>: <span class="str">'agronegocio'</span>,  <span class="cmt">// Alimentos e bebidas</span>
+
+  <span class="cmt">// Infraestrutura e construção</span>
+  <span class="str">'41'</span>: <span class="str">'construcao'</span>,
+  <span class="str">'42'</span>: <span class="str">'infraestrutura'</span>,
+
+  <span class="cmt">// Sistema financeiro</span>
+  <span class="str">'64'</span>: <span class="str">'financeiro'</span>,
+  <span class="str">'65'</span>: <span class="str">'financeiro'</span>,
+  <span class="str">'66'</span>: <span class="str">'financeiro'</span>,
+
+  <span class="cmt">// Saúde privada</span>
+  <span class="str">'86'</span>: <span class="str">'saude_privada'</span>,
+  <span class="str">'87'</span>: <span class="str">'saude_privada'</span>,
+
+  <span class="cmt">// Entidades religiosas</span>
+  <span class="str">'94'</span>: <span class="str">'religioso'</span>,    <span class="cmt">// Atividades de organizações associativas</span>
+  <span class="str">'8412'</span>: <span class="str">'religioso'</span>,  <span class="cmt">// Regulação das atividades sociais</span>
+};
+
+<span class="kw">function</span> <span class="fn">normalizarSetor</span>(cnae: <span class="cls">string</span>): <span class="cls">string</span> {
+  <span class="cmt">// Tenta match por 4 dígitos, depois 2 dígitos</span>
+  <span class="kw">return</span> SETOR_MAP[cnae.<span class="fn">slice</span>(<span class="num">0</span>, <span class="num">4</span>)]
+      ?? SETOR_MAP[cnae.<span class="fn">slice</span>(<span class="num">0</span>, <span class="num">2</span>)]
+      ?? <span class="str">'outros'</span>;
+}
+
+<span class="cmt">// Query de correlação: financiamento × votos por setor × tema</span>
+<span class="kw">const</span> CORRELACAO_QUERY = <span class="str">`
+  SELECT
+    l.nome_completo,
+    l.partido_atual,
+    f.setor_normalizado AS setor_financiador,
+    SUM(f.valor) AS total_recebido,
+    COUNT(vi.id) AS total_votos_tema,
+    COUNT(vi.id) FILTER (WHERE vi.voto = 'Sim') AS votos_favoraveis,
+    ROUND(
+      COUNT(vi.id) FILTER (WHERE vi.voto = 'Sim')::numeric
+      / NULLIF(COUNT(vi.id), 0) * 100, 1
+    ) AS pct_favoravel
+  FROM legisladores l
+  JOIN financiamentos_tse f ON f.legislador_id = l.id
+  JOIN votos_individuais vi ON vi.legislador_id = l.id
+  JOIN votacoes v ON v.id = vi.votacao_id
+  JOIN proposicoes p ON p.id = v.proposicao_id
+  WHERE p.temas_farol @> ARRAY[$1::text]
+    AND f.setor_normalizado = $2
+  GROUP BY l.id, l.nome_completo, l.partido_atual, f.setor_normalizado
+  HAVING SUM(f.valor) > 10000
+  ORDER BY total_recebido DESC
+`</span>;</pre>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     SEÇÃO 3 — SCORING CONSTITUCIONAL
+═══════════════════════════════════════════════════════ -->
+<section class="section" id="scoring">
+  <div class="section-header">
+    <span class="section-num">03</span>
+    <h2>Metodologia de Scoring Constitucional</h2>
+  </div>
+
+  <p>Esta é a peça mais sensível e distintiva do Farol. O objetivo não é produzir um tribunal paralelo,
+  mas um <strong>sistema de sinalização de risco</strong> que ative a atenção pública e de especialistas
+  quando um projeto legislativo pode violar a Constituição Federal de 1988.
+  O modelo é explicitamente auditável e sempre acompanhado de justificativa textual.</p>
+
+  <div class="nota">
+    <strong>Princípio epistemológico:</strong> o score é um <em>índice de risco constitucional</em>,
+    não uma decisão jurídica. Toda proposição com score ≥ 0.6 ("risco alto") é enfileirada para
+    revisão por especialistas humanos antes de ser exibida publicamente com o flag de risco.
+    A IA identifica; humanos validam.
+  </div>
+
+  <h3>Mapeamento CF/88 → Temas Legislativos</h3>
+  <p>Os artigos da Constituição são mapeados para os mesmos temas usados para classificar proposições.
+  Isso permite cruzar automaticamente: "este PL toca em matéria trabalhista → verificar Art. 7º".</p>
+
+  <div class="article-map">
+    <div class="article-cell">
+      <div class="article-num">Art. 1–4</div>
+      <div class="article-tema">Fundamentos da República</div>
+      <div class="article-tags">
+        <span class="tag social">democracia</span>
+        <span class="tag social">soberania</span>
+      </div>
+    </div>
+    <div class="article-cell">
+      <div class="article-num">Art. 5</div>
+      <div class="article-tema">Direitos e Garantias Fundamentais</div>
+      <div class="article-tags">
+        <span class="tag labor">liberdade</span>
+        <span class="tag social">igualdade</span>
+        <span class="tag social">privacidade</span>
+      </div>
+    </div>
+    <div class="article-cell">
+      <div class="article-num">Art. 6–11</div>
+      <div class="article-tema">Direitos Sociais</div>
+      <div class="article-tags">
+        <span class="tag labor">trabalho</span>
+        <span class="tag social">saúde</span>
+        <span class="tag social">educação</span>
+      </div>
+    </div>
+    <div class="article-cell">
+      <div class="article-num">Art. 7</div>
+      <div class="article-tema">Direitos dos Trabalhadores</div>
+      <div class="article-tags">
+        <span class="tag labor">jornada</span>
+        <span class="tag labor">salário</span>
+        <span class="tag labor">FGTS</span>
+      </div>
+    </div>
+    <div class="article-cell">
+      <div class="article-num">Art. 19</div>
+      <div class="article-tema">Vedações ao Estado</div>
+      <div class="article-tags">
+        <span class="tag religiao">laicidade</span>
+        <span class="tag social">culto</span>
+      </div>
+    </div>
+    <div class="article-cell">
+      <div class="article-num">Art. 170–192</div>
+      <div class="article-tema">Ordem Econômica</div>
+      <div class="article-tags">
+        <span class="tag propriedade">propriedade</span>
+        <span class="tag ambiental">meio ambiente</span>
+      </div>
+    </div>
+    <div class="article-cell">
+      <div class="article-num">Art. 196–200</div>
+      <div class="article-tema">Saúde</div>
+      <div class="article-tags">
+        <span class="tag social">SUS</span>
+        <span class="tag social">universal</span>
+      </div>
+    </div>
+    <div class="article-cell">
+      <div class="article-num">Art. 205–214</div>
+      <div class="article-tema">Educação</div>
+      <div class="article-tags">
+        <span class="tag social">público</span>
+        <span class="tag social">gratuito</span>
+      </div>
+    </div>
+    <div class="article-cell">
+      <div class="article-num">Art. 225</div>
+      <div class="article-tema">Meio Ambiente</div>
+      <div class="article-tags">
+        <span class="tag ambiental">clima</span>
+        <span class="tag ambiental">biodiversidade</span>
+      </div>
+    </div>
+    <div class="article-cell">
+      <div class="article-num">Art. 231–232</div>
+      <div class="article-tema">Direitos Indígenas</div>
+      <div class="article-tags">
+        <span class="tag indigena">terra</span>
+        <span class="tag indigena">cultura</span>
+      </div>
+    </div>
+    <div class="article-cell">
+      <div class="article-num">Art. 60 §4</div>
+      <div class="article-tema">Cláusulas Pétreas</div>
+      <div class="article-tags">
+        <span class="tag social">imutável</span>
+        <span class="tag labor">direitos</span>
+      </div>
+    </div>
+    <div class="article-cell">
+      <div class="article-num">Art. 37–41</div>
+      <div class="article-tema">Administração Pública</div>
+      <div class="article-tags">
+        <span class="tag social">legalidade</span>
+        <span class="tag social">impessoalidade</span>
+      </div>
+    </div>
+  </div>
+
+  <h3>Componentes do Score</h3>
+  <div class="scoring-grid">
+    <div class="score-cell">
+      <div class="score-title"><span class="score-icon">⚖</span> Conflito com Cláusulas Pétreas</div>
+      <p style="font-size:0.8rem">Máxima severidade. Cláusulas pétreas (Art. 60 §4) são imutáveis mesmo por PEC.
+      Qualquer proposta que toque em separação de poderes, federação, voto direto ou direitos fundamentais
+      recebe flag automático de revisão urgente.</p>
+      <div class="score-bar-wrap"><div class="score-bar" style="width:35%;background:#CC0000"></div></div>
+      <div class="score-weight">Peso: 35% do score total</div>
+    </div>
+    <div class="score-cell">
+      <div class="score-title"><span class="score-icon">📋</span> Sobreposição com Direitos Sociais</div>
+      <p style="font-size:0.8rem">Verifica se a proposição reduz direitos garantidos no Art. 6–11.
+      Aplica o princípio da proibição de retrocesso social (não-retrogatividade), consolidado
+      pela jurisprudência do STF.</p>
+      <div class="score-bar-wrap"><div class="score-bar" style="width:25%;background:var(--amarelo)"></div></div>
+      <div class="score-weight">Peso: 25% do score total</div>
+    </div>
+    <div class="score-cell">
+      <div class="score-title"><span class="score-icon">🔬</span> Precedente STF (ADIs e ADPFs)</div>
+      <p style="font-size:0.8rem">Cruza a proposta com o banco de Ações Diretas de Inconstitucionalidade
+      julgadas. Se temas similares já foram declarados inconstitucionais, o risco sobe
+      automaticamente.</p>
+      <div class="score-bar-wrap"><div class="score-bar" style="width:25%;background:#7B8CDE"></div></div>
+      <div class="score-weight">Peso: 25% do score total</div>
+    </div>
+    <div class="score-cell">
+      <div class="score-title"><span class="score-icon">📐</span> Conformidade Procedimental</div>
+      <p style="font-size:0.8rem">Verifica se o tipo de proposição é compatível com a matéria regulada.
+      Ex: alguns temas exigem PEC, não PL ordinário. Detecta tentativas de legislar via
+      instrumento inadequado.</p>
+      <div class="score-bar-wrap"><div class="score-bar" style="width:15%;background:var(--verde)"></div></div>
+      <div class="score-weight">Peso: 15% do score total</div>
+    </div>
+  </div>
+
+  <h3>Implementação do Analisador</h3>
+  <div class="code-block">
+    <div class="code-label">TypeScript — análise constitucional com Claude</div>
+    <pre>
+<span class="kw">const</span> CF88_SYSTEM_PROMPT = <span class="str">`
+Você é um analista constitucional especializado na Constituição Federal
+do Brasil de 1988 (CF/88). Sua função é avaliar proposições legislativas
+e identificar potenciais conflitos constitucionais com base em:
+
+1. ARTIGOS RELEVANTES: identifique quais artigos da CF/88 são tocados
+2. CLÁUSULAS PÉTREAS: verifique se Art. 60 §4 é relevante
+3. JURISPRUDÊNCIA STF: mencione ADIs ou ADPFs relacionadas se souber
+4. PRINCÍPIO DE NÃO-RETROCESSO: aplique em direitos sociais (Art. 6-11)
+5. LAICIDADE: verifique Art. 19 se matéria tiver cunho religioso
+
+Responda APENAS em JSON com a seguinte estrutura:
+{
+  "score": número entre 0.0 (sem risco) e 1.0 (risco crítico),
+  "nivel_risco": "baixo" | "medio" | "alto" | "critico",
+  "artigos_relevantes": [{"artigo": "Art. X", "inciso": "...", "relevancia": "..."}],
+  "conflito_clausula_petrea": boolean,
+  "retrocesso_social": boolean,
+  "justificativa": "texto em linguagem acessível ao cidadão (máx 200 palavras)",
+  "justificativa_tecnica": "texto para juristas (máx 300 palavras)",
+  "recomendacao_expert": boolean
+}
+`</span>;
+
+<span class="kw">async function</span> <span class="fn">analisarConstitucionalidade</span>(
+  proposicao: <span class="cls">Proposicao</span>,
+  precedentesSTF: <span class="cls">PrecedenteSTF</span>[]
+): <span class="cls">Promise</span>&lt;<span class="cls">ScoreCF88</span>&gt; {
+  <span class="kw">const</span> contexto = <span class="fn">montarContexto</span>(proposicao, precedentesSTF);
+
+  <span class="kw">const</span> response = <span class="kw">await</span> anthropic.messages.<span class="fn">create</span>({
+    model: <span class="str">'claude-sonnet-4-20250514'</span>,
+    max_tokens: <span class="num">1500</span>,
+    system: CF88_SYSTEM_PROMPT,
+    messages: [{
+      role: <span class="str">'user'</span>,
+      content: <span class="str">`
+PROPOSIÇÃO: <span class="op">${</span>proposicao.siglaTipo<span class="op">}</span> <span class="op">${</span>proposicao.numero<span class="op">}</span>/<span class="op">${</span>proposicao.ano<span class="op">}</span>
+EMENTA: <span class="op">${</span>proposicao.ementa<span class="op">}</span>
+TEMAS: <span class="op">${</span>proposicao.temas_farol.<span class="fn">join</span>(', ')<span class="op">}</span>
+TEXTO PARCIAL: <span class="op">${</span>proposicao.ementa_detalhada<span class="op">}</span>
+PRECEDENTES STF RELEVANTES: <span class="op">${</span><span class="cls">JSON</span>.<span class="fn">stringify</span>(precedentesSTF, <span class="kw">null</span>, <span class="num">2</span>)<span class="op">}</span>
+      `</span>
+    }]
+  });
+
+  <span class="kw">const</span> raw = response.content[<span class="num">0</span>].text;
+  <span class="kw">const</span> parsed: <span class="cls">ScoreCF88Raw</span> = <span class="cls">JSON</span>.<span class="fn">parse</span>(raw);
+
+  <span class="kw">return</span> {
+    ...parsed,
+    proposicao_id: proposicao.id,
+    revisado_por_expert: <span class="kw">false</span>, <span class="cmt">// sempre inicia como false</span>
+    modelo_versao: <span class="str">'claude-sonnet-4-20250514'</span>,
+    calculado_em: <span class="kw">new</span> <span class="cls">Date</span>().<span class="fn">toISOString</span>()
+  };
+}
+
+<span class="cmt">// Workflow completo: score → validação → publicação</span>
+<span class="kw">async function</span> <span class="fn">processarAnalise</span>(proposicaoId: <span class="cls">string</span>) {
+  <span class="kw">const</span> [proposicao, precedentes] = <span class="kw">await</span> <span class="cls">Promise</span>.<span class="fn">all</span>([
+    db.<span class="fn">findProposicao</span>(proposicaoId),
+    stf.<span class="fn">buscarPrecedentes</span>(proposicaoId)
+  ]);
+
+  <span class="kw">const</span> score = <span class="kw">await</span> <span class="fn">analisarConstitucionalidade</span>(proposicao, precedentes);
+  <span class="kw">await</span> db.<span class="fn">upsertScore</span>(score);
+
+  <span class="cmt">// Proposta de alto risco → fila de revisão humana</span>
+  <span class="kw">if</span> (score.score >= <span class="num">0.6</span> || score.conflito_clausula_petrea) {
+    <span class="kw">await</span> notificacoes.<span class="fn">enviarParaRevisores</span>(score);
+    <span class="kw">await</span> queue.<span class="fn">enqueue</span>(<span class="str">'revisao-expert'</span>, { scoreId: score.id });
+  }
+}</pre>
+  </div>
+
+  <h3>Escala de Risco — Como Exibir ao Público</h3>
+  <div class="inset">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--borda)">
+      <div style="background:var(--cinza-escuro);padding:1rem;text-align:center">
+        <div style="font-family:var(--fonte-mono);font-size:0.65rem;color:var(--verde);margin-bottom:0.5rem">BAIXO · 0.0–0.35</div>
+        <div style="font-size:0.8rem;color:var(--texto-dim)">Sem conflitos aparentes com a CF/88. Pode avançar.</div>
+      </div>
+      <div style="background:var(--cinza-escuro);padding:1rem;text-align:center">
+        <div style="font-family:var(--fonte-mono);font-size:0.65rem;color:#7B8CDE;margin-bottom:0.5rem">MÉDIO · 0.35–0.6</div>
+        <div style="font-size:0.8rem;color:var(--texto-dim)">Pontos de atenção identificados. Monitorar tramitação.</div>
+      </div>
+      <div style="background:var(--cinza-escuro);padding:1rem;text-align:center">
+        <div style="font-family:var(--fonte-mono);font-size:0.65rem;color:var(--amarelo);margin-bottom:0.5rem">ALTO · 0.6–0.85</div>
+        <div style="font-size:0.8rem;color:var(--texto-dim)">Prováveis conflitos. Aguardando revisão de juristas.</div>
+      </div>
+      <div style="background:var(--cinza-escuro);padding:1rem;text-align:center">
+        <div style="font-family:var(--fonte-mono);font-size:0.65rem;color:#FF6B6B;margin-bottom:0.5rem">CRÍTICO · 0.85–1.0</div>
+        <div style="font-size:0.8rem;color:var(--texto-dim)">Conflito grave detectado e confirmado por especialista.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     SEÇÃO 4 — GOVERNANÇA
+═══════════════════════════════════════════════════════ -->
+<section class="section" id="governanca">
+  <div class="section-header">
+    <span class="section-num">04</span>
+    <h2>Governança e Sustentabilidade</h2>
+  </div>
+
+  <p>Um projeto de infraestrutura cívica que monitora o poder tem uma equação de governança específica:
+  precisa ser <strong>financeiramente independente do Estado</strong>, <strong>tecnicamente auditável</strong>,
+  <strong>juridicamente defensável</strong>, e <strong>politicamente neutro</strong>
+  em sua metodologia (não em seus achados).</p>
+
+  <h3>Modelo Institucional</h3>
+  <div class="gov-grid">
+    <div class="gov-cell">
+      <span class="gov-icon">🏛</span>
+      <h4>Forma Jurídica</h4>
+      <h3>OSCIP ou Associação</h3>
+      <p style="font-size:0.82rem">Organização da Sociedade Civil de Interesse Público (OSCIP) permite receber
+      doações com benefício fiscal, assinar termos de parceria com governo sem ser controlada por ele,
+      e ter estrutura de governança transparente por lei. A associação simples é mais fácil de criar,
+      mas a OSCIP dá mais credibilidade a financiadores institucionais.</p>
+    </div>
+    <div class="gov-cell">
+      <span class="gov-icon">⚖</span>
+      <h4>Conselho de Governança</h4>
+      <h3>Tripé de Accountability</h3>
+      <p style="font-size:0.82rem"><strong>Conselho Diretivo:</strong> 5 pessoas, mandato rotativo de 2 anos,
+      incluindo pelo menos 1 jurista constitucionalista, 1 especialista em dados abertos, 1 representante de
+      sociedade civil organizada.<br><br>
+      <strong>Conselho Fiscal:</strong> 3 pessoas independentes, auditoria anual publicada.<br><br>
+      <strong>Comitê Científico:</strong> acadêmicos voluntários que validam a metodologia de scoring.</p>
+    </div>
+    <div class="gov-cell">
+      <span class="gov-icon">💻</span>
+      <h4>Código e Dados</h4>
+      <h3>Open Source Total</h3>
+      <p style="font-size:0.82rem">Todo o código é AGPL-3.0 — qualquer derivação também deve ser aberta.
+      Os dados processados são publicados sob CC0 (domínio público).
+      Os prompts de análise constitucional são versionados e publicados no repositório.
+      Qualquer pessoa pode auditar como um score foi gerado.</p>
+    </div>
+    <div class="gov-cell">
+      <span class="gov-icon">🔍</span>
+      <h4>Revisão Especializada</h4>
+      <h3>Camada Humana Obrigatória</h3>
+      <p style="font-size:0.82rem">Scores ≥ 0.6 nunca são publicados sem revisão humana. Uma rede de juristas
+      voluntários (via parceria com OAB, clínicas jurídicas universitárias) valida os alertas antes de
+      exibição pública. Isso protege o projeto de ações de deputados atingidos e mantém credibilidade.</p>
+    </div>
+  </div>
+
+  <h3>Matriz de Riscos</h3>
+  <table class="risk-table">
+    <thead>
+      <tr>
+        <th>Risco</th>
+        <th>Probabilidade</th>
+        <th>Impacto</th>
+        <th>Mitigação</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Ação judicial de deputado por score de risco</td>
+        <td><span class="badge medio">Média</span></td>
+        <td><span class="badge alto">Alto</span></td>
+        <td>Toda análise ≥0.6 tem revisão jurídica antes de publicar. Disclaimers claros: é sinalização de risco, não sentença.</td>
+      </tr>
+      <tr>
+        <td>Mudança na API da Câmara ou Senado</td>
+        <td><span class="badge medio">Média</span></td>
+        <td><span class="badge medio">Médio</span></td>
+        <td>Adapter pattern no client: interface estável, implementação trocável. Snapshots diários dos dados em S3.</td>
+      </tr>
+      <tr>
+        <td>Captura por financiadores com agenda</td>
+        <td><span class="badge baixo">Baixa</span></td>
+        <td><span class="badge alto">Alto</span></td>
+        <td>Teto de doação por entidade (ex: 20% do orçamento). Proibição de doações de partidos, governo e empresas reguladas.</td>
+      </tr>
+      <tr>
+        <td>Custo de API da Anthropic em escala</td>
+        <td><span class="badge medio">Média</span></td>
+        <td><span class="badge medio">Médio</span></td>
+        <td>Score apenas para proposições com votação nominal. Cache agressivo. Possibilidade de migrar para modelos open-source locais.</td>
+      </tr>
+      <tr>
+        <td>Viés na metodologia de scoring</td>
+        <td><span class="badge medio">Média</span></td>
+        <td><span class="badge alto">Alto</span></td>
+        <td>Publicação total dos prompts. Comitê científico independente faz revisão semestral da metodologia.</td>
+      </tr>
+      <tr>
+        <td>Bloqueio de acesso aos dados abertos</td>
+        <td><span class="badge baixo">Baixa</span></td>
+        <td><span class="badge alto">Alto</span></td>
+        <td>Arquivo histórico próprio. Parceria com Internet Archive e outras organizações que espelham dados públicos.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Modelo Financeiro</h3>
+  <div class="two-col">
+    <div>
+      <h4>Fontes Priorizadas</h4>
+      <div class="inset">
+        <p style="font-size:0.82rem;margin-bottom:0.5rem"><strong style="color:var(--verde)">Fundações filantrópicas</strong><br>
+        Ford Foundation, Open Society, Luminate, Knight Foundation têm linhas específicas para democracia digital e transparência. São fontes ideais: não têm agenda política brasileira e têm histórico de financiar projetos similares (Serenata de Amor, Brasil.IO).</p>
+        <p style="font-size:0.82rem;margin-bottom:0.5rem"><strong style="color:var(--verde)">Crowdfunding cívico</strong><br>
+        Subscritores mensais via Catarse ou Apoia.se. Independência + base ativa de apoiadores que são também embaixadores.</p>
+        <p style="font-size:0.82rem;margin-bottom:0"><strong style="color:var(--verde)">Parcerias com mídia</strong><br>
+        Agência Pública, The Intercept Brasil, Piauí: licença de uso dos dados processados em troca de financiamento ou visibilidade.</p>
+      </div>
+    </div>
+    <div>
+      <h4>Fontes Excluídas (por protocolo)</h4>
+      <div class="inset">
+        <p style="font-size:0.82rem;margin-bottom:0.5rem"><strong style="color:#FF6B6B">Partidos políticos</strong> — conflito de interesse direto com o objeto monitorado.</p>
+        <p style="font-size:0.82rem;margin-bottom:0.5rem"><strong style="color:#FF6B6B">Governo federal, estadual ou municipal</strong> — dependência que compromete independência editorial.</p>
+        <p style="font-size:0.82rem;margin-bottom:0.5rem"><strong style="color:#FF6B6B">Empresas reguladas pelo Congresso</strong> — agronegócio, telecom, sistema financeiro, saúde privada. Doações destes setores são exatamente o que o sistema monitora.</p>
+        <p style="font-size:0.82rem;margin-bottom:0"><strong style="color:var(--amarelo)">Fontes anônimas</strong> — toda doação acima de R$500 é publicada no relatório anual.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     SEÇÃO 5 — ROADMAP
+═══════════════════════════════════════════════════════ -->
+<section class="section" id="roadmap">
+  <div class="section-header">
+    <span class="section-num">05</span>
+    <h2>Roadmap de Construção</h2>
+  </div>
+
+  <div class="phases">
+    <div class="phase">
+      <div class="phase-label">Fase 1 · meses 1–4</div>
+      <div class="phase-title">Fundação de Dados</div>
+      <ul class="phase-items">
+        <li>Configurar pipeline Câmara API → Postgres</li>
+        <li>Modelo de dados completo migrado</li>
+        <li>Sync de deputados, votações, votos</li>
+        <li>Normalização de setores TSE</li>
+        <li>Dashboard básico de perfil de deputado</li>
+        <li>Filtro por tema e por estado (UF)</li>
+        <li>Deploy público (read-only, sem scoring)</li>
+        <li>Repositório aberto no GitHub</li>
+      </ul>
+    </div>
+    <div class="phase">
+      <div class="phase-label">Fase 2 · meses 5–9</div>
+      <div class="phase-title">Inteligência Comportamental</div>
+      <ul class="phase-items">
+        <li>NLP: tagging temático automático de proposições</li>
+        <li>Clustering de deputados por similaridade de votos</li>
+        <li>Mapa de coalizões reais (não por partido)</li>
+        <li>Integração dados financeiros TSE</li>
+        <li>Visualização correlação doador × voto</li>
+        <li>API pública com rate limiting</li>
+        <li>Integração Senado Federal</li>
+        <li>Alerta por email/tema (sistema de notificação)</li>
+      </ul>
+    </div>
+    <div class="phase">
+      <div class="phase-label">Fase 3 · meses 10–18</div>
+      <div class="phase-title">Constitucional + IA Cívica</div>
+      <ul class="phase-items">
+        <li>Score constitucional CF/88 em produção</li>
+        <li>Rede de revisores juristas parceiros</li>
+        <li>Assistente Farol (RAG sobre base completa)</li>
+        <li>Integração STF (ADIs, ADPFs)</li>
+        <li>App mobile (leitura + alertas)</li>
+        <li>Parceria com veículos de mídia</li>
+        <li>Relatório anual de transparência publicado</li>
+        <li>Protocolo de governança formalizado</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Próximos Passos Imediatos</h3>
+  <div class="nota">
+    <strong>Para começar agora,</strong> o menor experimento válido é:
+    um script Python ou TypeScript que puxa os votos de todos os deputados
+    em proposições com tema "trabalho" nos últimos 12 meses, cruza com o
+    partido e produz um CSV ranqueado por percentual de votos favoráveis
+    a direitos trabalhistas. Isso pode ser feito em uma tarde,
+    custa zero de infraestrutura, e já é um achado publicável
+    que valida toda a direção do projeto.
+  </div>
+
+  <div class="code-block">
+    <div class="code-label">Shell — bootstrap do projeto</div>
+    <pre>
+<span class="cmt"># Criar estrutura base do projeto</span>
+npx create-next-app@latest farol-legislativo \
+  --typescript --tailwind --app --no-src-dir
+
+<span class="cmt"># Dependências de dados</span>
+npm install pg drizzle-orm drizzle-kit \
+  @anthropic-ai/sdk \
+  zod date-fns \
+  recharts lucide-react
+
+<span class="cmt"># Setup do banco local para desenvolvimento</span>
+docker run -d \
+  --name farol-db \
+  -e POSTGRES_DB=farol \
+  -e POSTGRES_USER=farol \
+  -e POSTGRES_PASSWORD=dev \
+  -p 5432:5432 \
+  ankane/pgvector  <span class="cmt"># inclui pgvector para embeddings</span>
+
+<span class="cmt"># Primeiro script: baixar todos os deputados da legislatura atual</span>
+npx tsx scripts/seed-deputados.ts</pre>
+  </div>
+</section>
+
+<footer>
+  Farol — Arquitetura v0.1 · documento gerado para desenvolvimento · AGPL-3.0 proposto
+  · dados: dadosabertos.camara.leg.br · legis.senado.leg.br · dadosabertos.tse.jus.br
+</footer>
+
+</body>
+</html>
