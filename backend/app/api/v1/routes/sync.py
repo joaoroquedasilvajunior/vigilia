@@ -14,7 +14,7 @@ from app.ingestion.sync_pipeline import (
     sync_votes_for_bill,
 )
 from app.ingestion.tag_pipeline import tag_bills
-from app.ingestion.tse_pipeline import sync_donors
+from app.ingestion.tse_pipeline import inspect_donors_csv, sync_donors
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -55,6 +55,16 @@ async def trigger_sync_votes(
 ):
     background_tasks.add_task(sync_votes_for_bill, camara_bill_id)
     return {"status": "queued", "job": "sync_votes_for_bill", "camara_bill_id": camara_bill_id}
+
+
+@router.post("/donors/inspect")
+async def trigger_inspect_donors_csv(
+    background_tasks: BackgroundTasks,
+    _: Annotated[None, Depends(_verify_secret)],
+):
+    """Diagnostic — log TSE 2022 receitas CSV column headers (no DB writes)."""
+    background_tasks.add_task(inspect_donors_csv)
+    return {"status": "queued", "job": "inspect_donors_csv"}
 
 
 @router.post("/donors")

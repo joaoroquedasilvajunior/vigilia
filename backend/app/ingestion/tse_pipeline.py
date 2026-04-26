@@ -307,6 +307,48 @@ async def _process_csv_stream(
     return rows_matched, donations_seen
 
 
+async def inspect_donors_csv(zip_url: str = DEFAULT_TSE_URL) -> None:
+    """
+    Diagnostic-only: download the TSE zip, read the header line of the
+    first receitas CSV, and log all column names + which of our canonical
+    aliases resolved. Does not write to the database.
+    """
+    logger.info("inspect_donors_csv: downloading %s", zip_url)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        zip_path = os.path.join(tmpdir, "tse.zip")
+        async with httpx.AsyncClient(timeout=600.0, follow_redirects=True) as client:
+            async with client.stream("GET", zip_url) as resp:
+                resp.raise_for_status()
+                with open(zip_path, "wb") as f:
+                    async for chunk in resp.aiter_bytes(chunk_size=1 << 20):
+                        f.write(chunk)
+        logger.info("inspect_donors_csv: download done (%d bytes)", os.path.getsize(zip_path))
+
+        with zipfile.ZipFile(zip_path) as zf:
+            members = [
+                m for m in zf.namelist()
+                if re.match(r"receitas_candidatos_2022.*\.csv", m, re.I)
+            ]
+            if not members:
+                logger.warning("inspect_donors_csv: no receitas CSVs found")
+                return
+            target = sorted(members, key=lambda m: zf.getinfo(m).file_size)[0]
+            with zf.open(target) as raw:
+                header_line = raw.readline().decode("latin-1")
+            cols = [c.strip().strip('"') for c in header_line.split(";")]
+            logger.info("inspect_donors_csv: first CSV = %s, %d columns", target, len(cols))
+            logger.info("inspect_donors_csv: ALL COLUMNS:")
+            for i, c in enumerate(cols):
+                logger.info("  [%3d] %s", i, c)
+            # Which donor-sector-related columns exist?
+            sector_like = [c for c in cols if any(
+                k in c.upper() for k in ("SETOR", "CNAE", "ECON", "ATIV")
+            )]
+            logger.info("inspect_donors_csv: SECTOR-LIKE COLUMNS = %s", sector_like)
+            resolved = _resolve_columns(cols)
+            logger.info("inspect_donors_csv: RESOLVED ALIASES = %s", resolved)
+
+
 async def sync_donors(zip_url: str = DEFAULT_TSE_URL) -> None:
     """
     Full pipeline: download TSE zip → process each receitas CSV → upsert
