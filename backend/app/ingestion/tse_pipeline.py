@@ -129,69 +129,79 @@ async def _build_legislator_lookup() -> dict[str, str]:
     return {r.cpf_hash: str(r.id) for r in rows}
 
 
-async def _flush_batch(
-    donors_buf: dict[str, dict],
-    links_buf: list[dict],
-) -> None:
-    """Upsert one batch of donors then donor_links."""
-    if not donors_buf and not links_buf:
+async def _flush_donors(donors_buf: dict[str, dict]) -> None:
+    """Upsert one batch of donors keyed by cnpj_cpf_hash."""
+    if not donors_buf:
+        return
+    async with AsyncSessionLocal() as db:
+        stmt = pg_insert(Donor).values(list(donors_buf.values()))
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["cnpj_cpf_hash"],
+            set_={
+                "name": stmt.excluded.name,
+                "entity_type": stmt.excluded.entity_type,
+                "sector_group": stmt.excluded.sector_group,
+                "state_uf": stmt.excluded.state_uf,
+            },
+        )
+        await db.execute(stmt)
+        await db.commit()
+
+
+async def _flush_links(links_agg: dict[tuple, dict]) -> None:
+    """
+    Resolve donor hashes → ids, then upsert donor_links in chunks.
+
+    Aggregation happens once at end of CSV so per-row sums are correct.
+    Each chunk uses ON CONFLICT to upsert idempotently (re-runs of the
+    pipeline overwrite, since the in-memory agg already represents the
+    full sum for that combination).
+    """
+    if not links_agg:
         return
 
+    hashes = {key[1] for key in links_agg.keys()}  # key = (leg_id, hash, year, type)
     async with AsyncSessionLocal() as db:
-        # 1. Upsert donors keyed by cnpj_cpf_hash
-        if donors_buf:
-            stmt = pg_insert(Donor).values(list(donors_buf.values()))
+        donor_rows = (
+            await db.execute(
+                select(Donor.id, Donor.cnpj_cpf_hash)
+                .where(Donor.cnpj_cpf_hash.in_(hashes))
+            )
+        ).all()
+        hash_to_id = {r.cnpj_cpf_hash: r.id for r in donor_rows}
+
+        # Build final values list with resolved donor_ids, dropping links
+        # whose donor never made it to the donors table.
+        values: list[dict] = []
+        for (leg_id, donor_hash, year, dtype), payload in links_agg.items():
+            did = hash_to_id.get(donor_hash)
+            if not did:
+                continue
+            values.append({
+                "legislator_id": leg_id,
+                "donor_id": did,
+                "amount_brl": payload["amount_brl"],
+                "election_year": year,
+                "donation_type": dtype,
+                "source_doc_ref": payload["source_doc_ref"],
+            })
+
+        # Insert in chunks to keep statement size reasonable
+        CHUNK = 500
+        for i in range(0, len(values), CHUNK):
+            chunk = values[i : i + CHUNK]
+            stmt = pg_insert(DonorLink).values(chunk)
             stmt = stmt.on_conflict_do_update(
-                index_elements=["cnpj_cpf_hash"],
+                index_elements=[
+                    "legislator_id", "donor_id",
+                    "election_year", "donation_type",
+                ],
                 set_={
-                    "name": stmt.excluded.name,
-                    "entity_type": stmt.excluded.entity_type,
-                    "sector_group": stmt.excluded.sector_group,
-                    "state_uf": stmt.excluded.state_uf,
+                    "amount_brl": stmt.excluded.amount_brl,
+                    "source_doc_ref": stmt.excluded.source_doc_ref,
                 },
             )
             await db.execute(stmt)
-            await db.flush()
-
-        # 2. Resolve donor_id for each link via the just-upserted hashes
-        if links_buf:
-            hashes = {l["_donor_hash"] for l in links_buf}
-            donor_rows = (
-                await db.execute(
-                    select(Donor.id, Donor.cnpj_cpf_hash)
-                    .where(Donor.cnpj_cpf_hash.in_(hashes))
-                )
-            ).all()
-            hash_to_id = {r.cnpj_cpf_hash: r.id for r in donor_rows}
-
-            link_values = []
-            for l in links_buf:
-                did = hash_to_id.get(l["_donor_hash"])
-                if not did:
-                    continue
-                link_values.append({
-                    "legislator_id": l["legislator_id"],
-                    "donor_id": did,
-                    "amount_brl": l["amount_brl"],
-                    "election_year": l["election_year"],
-                    "donation_type": l["donation_type"],
-                    "source_doc_ref": l["source_doc_ref"],
-                })
-
-            if link_values:
-                link_stmt = pg_insert(DonorLink).values(link_values)
-                link_stmt = link_stmt.on_conflict_do_update(
-                    index_elements=[
-                        "legislator_id", "donor_id",
-                        "election_year", "donation_type",
-                    ],
-                    set_={
-                        "amount_brl": link_stmt.excluded.amount_brl,
-                        "source_doc_ref": link_stmt.excluded.source_doc_ref,
-                    },
-                )
-                await db.execute(link_stmt)
-
         await db.commit()
 
 
@@ -207,10 +217,12 @@ async def _process_csv_stream(
     rows_matched = 0
     donations_seen = 0
 
-    # Buffers — flushed every BATCH_SIZE rows
-    BATCH_SIZE = 500
-    donors_buf: dict[str, dict] = {}  # hash -> donor row
-    links_buf: list[dict] = []
+    # Donors flush periodically (can be 100k+ unique across all candidates).
+    # Links AGGREGATE across the whole CSV — sum amounts per
+    # (leg, donor_hash, year, type) — then flush once at end.
+    DONOR_FLUSH = 1000
+    donors_buf: dict[str, dict] = {}
+    links_agg: dict[tuple, dict] = {}
 
     # pandas chunked read keeps memory bounded
     reader = pd.read_csv(
@@ -262,7 +274,7 @@ async def _process_csv_stream(
 
             donation_type = (row.get(cols.get("donation_type", ""), "") or "").strip()[:50] or "doacao"
 
-            # Dedupe donors within batch by hash
+            # Dedupe donors within current buffer by hash
             if donor_hash not in donors_buf:
                 donors_buf[donor_hash] = {
                     "cnpj_cpf_hash": donor_hash,
@@ -272,24 +284,26 @@ async def _process_csv_stream(
                     "state_uf": state_uf,
                 }
 
-            links_buf.append({
-                "legislator_id": leg_id,
-                "_donor_hash": donor_hash,
-                "amount_brl": amount,
-                "election_year": ELECTION_YEAR,
-                "donation_type": donation_type,
-                "source_doc_ref": f"TSE2022:{cand_cpf}:{donor_doc}",
-            })
+            # Aggregate links across the whole CSV (sum amounts per key)
+            link_key = (leg_id, donor_hash, ELECTION_YEAR, donation_type)
+            if link_key in links_agg:
+                links_agg[link_key]["amount_brl"] += amount
+            else:
+                links_agg[link_key] = {
+                    "amount_brl": amount,
+                    "source_doc_ref": f"TSE2022:{cand_cpf}",
+                }
 
             rows_matched += 1
 
-            if len(links_buf) >= BATCH_SIZE:
-                await _flush_batch(donors_buf, links_buf)
+            # Flush donors periodically; links wait for end-of-CSV
+            if len(donors_buf) >= DONOR_FLUSH:
+                await _flush_donors(donors_buf)
                 donors_buf.clear()
-                links_buf.clear()
 
-    # Final flush
-    await _flush_batch(donors_buf, links_buf)
+    # Final flush — donors first so the FK target rows exist for links
+    await _flush_donors(donors_buf)
+    await _flush_links(links_agg)
     return rows_matched, donations_seen
 
 
