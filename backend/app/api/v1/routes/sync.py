@@ -14,6 +14,7 @@ from app.ingestion.sync_pipeline import (
     sync_votes_for_bill,
 )
 from app.ingestion.tag_pipeline import tag_bills
+from app.ingestion.tse_pipeline import sync_donors
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -54,6 +55,16 @@ async def trigger_sync_votes(
 ):
     background_tasks.add_task(sync_votes_for_bill, camara_bill_id)
     return {"status": "queued", "job": "sync_votes_for_bill", "camara_bill_id": camara_bill_id}
+
+
+@router.post("/donors")
+async def trigger_sync_donors(
+    background_tasks: BackgroundTasks,
+    _: Annotated[None, Depends(_verify_secret)],
+):
+    """Download TSE 2022 candidate accounts and upsert donors + donor_links."""
+    background_tasks.add_task(sync_donors)
+    return {"status": "queued", "job": "sync_donors"}
 
 
 @router.post("/tags")

@@ -9,7 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml .
 RUN pip install --no-cache-dir fastapi "uvicorn[standard]" httpx asyncpg \
     "sqlalchemy[asyncio]" alembic "pydantic>=2.9" "pydantic-settings>=2.6" \
-    anthropic python-dotenv tenacity psycopg2-binary
+    anthropic python-dotenv tenacity psycopg2-binary \
+    pandas scikit-learn numpy
 
 COPY app/ ./app/
 
