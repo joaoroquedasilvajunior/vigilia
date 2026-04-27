@@ -220,18 +220,23 @@ async def _cluster_signal(legislator_ids: list[str]) -> dict:
             )
         ).all()
         donor_total = sum(float(r.amount_brl or 0) for r in donor_rows) or 1.0
+
+        def _is_party_direction(name: str | None) -> bool:
+            return bool(name) and ("direção" in name.lower() or "direcao" in name.lower())
+
         party_fund_amt = sum(
             float(r.amount_brl or 0) for r in donor_rows
-            if r.name and ("direção" in r.name.lower() or "direcao" in r.name.lower())
+            if _is_party_direction(r.name)
         )
         individual_amt = sum(
             float(r.amount_brl or 0) for r in donor_rows
-            if r.entity_type == "pessoa_fisica"
-            and not (r.name and ("direção" in r.name.lower() or "direcao" in r.name.lower()))
+            if r.entity_type == "pessoa_fisica" and not _is_party_direction(r.name)
         )
+        # Excluding direção entries: party-fund CNPJs would otherwise double-count
+        # in both party_fund and company buckets (sum >100%).
         company_amt = sum(
             float(r.amount_brl or 0) for r in donor_rows
-            if r.entity_type == "pessoa_juridica"
+            if r.entity_type == "pessoa_juridica" and not _is_party_direction(r.name)
         )
 
     return {
