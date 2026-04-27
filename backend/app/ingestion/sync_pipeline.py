@@ -274,6 +274,123 @@ HIGH_PROFILE_BILL_CAMARA_IDS: list[int] = [
 ]
 
 
+async def fetch_voted_bill_ids(
+    date_start: str = "2023-02-01",
+    date_end: str | None = None,
+    plenary_only: bool = True,
+) -> list[int]:
+    """
+    Walk the Câmara /votacoes endpoint between date_start and date_end and
+    return a deduplicated list of bill camara_ids that actually had at least
+    one voting session in that window.
+
+    Filters to PLEN (plenary) by default since committee votes have <40
+    voters and would skew clustering. The session id format is
+    "{bill_camara_id}-{seq}" so we extract the bill id from there
+    (the API's proposicaoObjeto / uriProposicaoObjeto fields are often null).
+    """
+    if date_end is None:
+        date_end = datetime.now().strftime("%Y-%m-%d")
+
+    logger.info(
+        "fetch_voted_bill_ids: %s → %s (plenary_only=%s)",
+        date_start, date_end, plenary_only,
+    )
+
+    seen: set[int] = set()
+    sessions = 0
+    async with CamaraClient() as client:
+        async for session in client.get_voting_sessions(
+            date_start=date_start, date_end=date_end, plenary_only=plenary_only
+        ):
+            sessions += 1
+            seen.add(session["bill_camara_id"])
+
+    bill_ids = sorted(seen)
+    logger.info(
+        "fetch_voted_bill_ids: %d unique bills (across %d sessions)",
+        len(bill_ids), sessions,
+    )
+    return bill_ids
+
+
+async def _bill_has_votes(db, camara_id: int) -> bool:
+    """Skip-check: does this bill already have any vote rows?"""
+    row = await db.execute(
+        select(Vote.id)
+        .join(Bill, Vote.bill_id == Bill.id)
+        .where(Bill.camara_id == camara_id)
+        .limit(1)
+    )
+    return row.scalar_one_or_none() is not None
+
+
+async def sync_all_voted_bills(
+    date_start: str = "2023-02-01",
+    date_end: str | None = None,
+    delay_between_bills: float = 1.0,
+    skip_already_synced: bool = True,
+) -> None:
+    """
+    Full coverage vote sync for every bill that had a plenary vote
+    between date_start and date_end (defaults: 2023-02-01 to today).
+
+    Algorithm:
+      1. List unique bill camara_ids from /votacoes
+      2. For each bill: skip if it already has votes; otherwise call
+         sync_votes_for_bill (which auto-fetches the bill if missing)
+      3. Sleep `delay_between_bills` seconds between bills to be polite
+      4. Log progress every 10 bills
+
+    Idempotent: skip-if-has-votes makes restarts safe — the job resumes
+    where it left off after a crash.
+
+    Realistic runtime: 50-200+ bills × 30s-5min each = several hours.
+    Multi-session bills (e.g. PEC turn votes) take longer.
+    """
+    bill_ids = await fetch_voted_bill_ids(date_start=date_start, date_end=date_end)
+    if not bill_ids:
+        logger.warning("sync_all_voted_bills: no voted bills found in window")
+        return
+
+    total = len(bill_ids)
+    skipped = synced = failed = 0
+    start_ts = datetime.now()
+
+    for i, camara_id in enumerate(bill_ids, start=1):
+        try:
+            if skip_already_synced:
+                async with AsyncSessionLocal() as db:
+                    if await _bill_has_votes(db, camara_id):
+                        skipped += 1
+                        continue
+
+            await sync_votes_for_bill(camara_id)
+            synced += 1
+        except Exception as exc:
+            failed += 1
+            logger.warning(
+                "sync_all_voted_bills: bill %d failed — %s", camara_id, exc,
+            )
+
+        if i % 10 == 0 or i == total:
+            elapsed = (datetime.now() - start_ts).total_seconds()
+            rate = i / max(elapsed, 1.0)
+            eta_min = (total - i) / max(rate, 0.001) / 60
+            logger.info(
+                "sync_all_voted_bills: %d/%d processed "
+                "(synced=%d skipped=%d failed=%d) — rate %.2f/s, ETA %.0f min",
+                i, total, synced, skipped, failed, rate, eta_min,
+            )
+
+        await asyncio.sleep(delay_between_bills)
+
+    logger.info(
+        "sync_all_voted_bills: COMPLETE — total=%d synced=%d skipped=%d failed=%d",
+        total, synced, skipped, failed,
+    )
+
+
 async def sync_high_profile_bills_votes() -> None:
     """
     Pull votes for every bill in HIGH_PROFILE_BILL_CAMARA_IDS.

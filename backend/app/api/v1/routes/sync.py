@@ -8,6 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 
 from app.core.config import settings
 from app.ingestion.sync_pipeline import (
+    sync_all_voted_bills,
     sync_high_profile_bills_votes,
     sync_legislators,
     sync_recent_bills,
@@ -96,6 +97,29 @@ async def trigger_tag_bills(
     """Tag all untagged bills with theme slugs using claude-haiku-4-5."""
     background_tasks.add_task(tag_bills)
     return {"status": "queued", "job": "tag_bills"}
+
+
+@router.post("/votes/all")
+async def trigger_sync_all_voted_bills(
+    background_tasks: BackgroundTasks,
+    _: Annotated[None, Depends(_verify_secret)],
+    date_start: str = "2023-02-01",
+    date_end: str | None = None,
+):
+    """
+    Sync votes for every bill that had a plenary vote in the window.
+    Estimated runtime: 2-4+ hours for the full 2023-2024 legislature.
+    Idempotent: bills with existing votes are skipped on retry.
+    """
+    background_tasks.add_task(
+        sync_all_voted_bills, date_start=date_start, date_end=date_end,
+    )
+    return {
+        "status": "queued",
+        "job": "sync_all_voted_bills",
+        "date_start": date_start,
+        "date_end": date_end,
+    }
 
 
 @router.post("/votes/high-profile")
