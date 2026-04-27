@@ -132,41 +132,53 @@ class CamaraClient:
         start_dt = datetime.strptime(date_start, "%Y-%m-%d")
         end_dt   = datetime.strptime(date_end,   "%Y-%m-%d")
 
+        # Lazy-import logging to avoid module-init reordering
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+
         win_start = start_dt
         while win_start <= end_dt:
             win_end = min(win_start + timedelta(days=chunk_days - 1), end_dt)
-            page = 1
-            while True:
-                data = await self._get("/votacoes", params={
-                    "dataInicio": win_start.strftime("%Y-%m-%d"),
-                    "dataFim":    win_end.strftime("%Y-%m-%d"),
-                    "itens":      100,
-                    "pagina":     page,
-                    "ordem":      "ASC",
-                    "ordenarPor": "dataHoraRegistro",
-                })
-                items = data.get("dados", [])
-                if not items:
-                    break
-                for s in items:
-                    sigla = s.get("siglaOrgao")
-                    if plenary_only and sigla != "PLEN":
-                        continue
-                    # Session id format: {bill_camara_id}-{seq}
-                    sess_id = s.get("id") or ""
-                    m = re.match(r"^(\d+)-", sess_id)
-                    if not m:
-                        continue
-                    yield {
-                        "session_id":      sess_id,
-                        "bill_camara_id":  int(m.group(1)),
-                        "date":            s.get("data"),
-                        "sigla_orgao":     sigla,
-                        "descricao":       s.get("descricao") or "",
-                    }
-                if not any(lnk.get("rel") == "next" for lnk in data.get("links", [])):
-                    break
-                page += 1
+            win_label = f"{win_start.date()}→{win_end.date()}"
+            try:
+                page = 1
+                while True:
+                    data = await self._get("/votacoes", params={
+                        "dataInicio": win_start.strftime("%Y-%m-%d"),
+                        "dataFim":    win_end.strftime("%Y-%m-%d"),
+                        "itens":      100,
+                        "pagina":     page,
+                        "ordem":      "ASC",
+                        "ordenarPor": "dataHoraRegistro",
+                    })
+                    items = data.get("dados", [])
+                    if not items:
+                        break
+                    for s in items:
+                        sigla = s.get("siglaOrgao")
+                        if plenary_only and sigla != "PLEN":
+                            continue
+                        # Session id format: {bill_camara_id}-{seq}
+                        sess_id = s.get("id") or ""
+                        m = re.match(r"^(\d+)-", sess_id)
+                        if not m:
+                            continue
+                        yield {
+                            "session_id":      sess_id,
+                            "bill_camara_id":  int(m.group(1)),
+                            "date":            s.get("data"),
+                            "sigla_orgao":     sigla,
+                            "descricao":       s.get("descricao") or "",
+                        }
+                    if not any(lnk.get("rel") == "next" for lnk in data.get("links", [])):
+                        break
+                    page += 1
+            except Exception as exc:
+                # 504s, transient network, etc — don't kill the whole walk
+                _log.warning(
+                    "get_voting_sessions: chunk %s failed (%s); skipping window",
+                    win_label, exc,
+                )
             win_start = win_end + timedelta(days=1)
 
     async def get_votes_for_bill(self, camara_bill_id: int) -> list[dict]:
