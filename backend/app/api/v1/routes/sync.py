@@ -13,6 +13,7 @@ from app.ingestion.sync_pipeline import (
     sync_recent_bills,
     sync_votes_for_bill,
 )
+from app.analysis.clustering import compute_clusters
 from app.ingestion.tag_pipeline import tag_bills
 from app.ingestion.tse_pipeline import inspect_donors_csv, sync_donors
 
@@ -55,6 +56,16 @@ async def trigger_sync_votes(
 ):
     background_tasks.add_task(sync_votes_for_bill, camara_bill_id)
     return {"status": "queued", "job": "sync_votes_for_bill", "camara_bill_id": camara_bill_id}
+
+
+@router.post("/clusters")
+async def trigger_compute_clusters(
+    background_tasks: BackgroundTasks,
+    _: Annotated[None, Depends(_verify_secret)],
+):
+    """Run k-means behavioral clustering on the legislator vote matrix."""
+    background_tasks.add_task(compute_clusters)
+    return {"status": "queued", "job": "compute_clusters"}
 
 
 @router.post("/donors/inspect")
