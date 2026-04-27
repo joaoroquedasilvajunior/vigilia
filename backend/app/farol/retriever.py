@@ -7,7 +7,7 @@ sources_list is returned to the frontend for clickable citations.
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.farol.classifier import ClassifyResult
@@ -320,43 +320,104 @@ async def _vote_pattern_bill(intent: ClassifyResult, db: AsyncSession) -> Retrie
     return RetrievalResult(context="\n".join(lines), sources=sources)
 
 
+# ── Funding-source classification ─────────────────────────────────────────────
+# Post-2015 ban (Lei 13.165/2015), Brazilian campaign donations come almost
+# entirely from public party-fund transfers (FEFC) — visible as donor names
+# like "Direção Nacional" or "Direção Estadual/Distrital". Companies were
+# banned outright; only narrow legal exceptions remain. We classify each
+# donor row inline so the retriever doesn't need a denormalised column.
+
+def _funding_source_case():
+    """SQLAlchemy CASE returning 'party_fund' | 'company' | 'individual' | 'other'."""
+    return case(
+        (
+            or_(
+                func.lower(Donor.name).like("%direção%"),
+                func.lower(Donor.name).like("%direcao%"),
+                func.lower(Donor.name).like("%fundo eleitoral%"),
+                func.lower(Donor.name).like("%fefc%"),
+            ),
+            "party_fund",
+        ),
+        (Donor.entity_type == "pessoa_juridica", "company"),
+        (Donor.entity_type == "pessoa_fisica", "individual"),
+        else_="other",
+    )
+
+
+_SOURCE_LABEL_PT = {
+    "party_fund":  "Fundo partidário/FEFC",
+    "individual":  "Pessoa física",
+    "company":     "Empresa (PJ)",
+    "other":       "Outros",
+}
+
+
 async def _donor_exposure(intent: ClassifyResult, db: AsyncSession) -> RetrievalResult:
+    """
+    Donor exposure analysis tuned for post-2015 Brazilian electoral reality.
+
+    Per-deputy: total received, funding-source breakdown, top individual donors,
+    top corporate donors. Cross-deputy: lists individuals who funded multiple
+    deputies (potential proxy / coordination signal).
+    """
+    # ── No legislator named → cross-deputy coordination view ──────────────────
     if not intent.legislator_name:
-        # Return top donors across all legislators
-        top = (
+        # Top individuals (CPF) who funded the largest number of distinct deputies
+        coord = (
             await db.execute(
                 select(
+                    Donor.id,
                     Donor.name,
-                    Donor.sector_group,
-                    func.sum(DonorLink.amount_brl).label("total"),
                     func.count(DonorLink.legislator_id.distinct()).label("leg_count"),
+                    func.sum(DonorLink.amount_brl).label("total"),
                 )
                 .join(DonorLink, Donor.id == DonorLink.donor_id)
-                .group_by(Donor.id)
-                .order_by(text("total DESC"))
+                .where(Donor.entity_type == "pessoa_fisica")
+                .group_by(Donor.id, Donor.name)
+                .having(func.count(DonorLink.legislator_id.distinct()) > 1)
+                .order_by(text("leg_count DESC"), text("total DESC"))
                 .limit(10)
             )
         ).all()
 
-        if not top:
-            return RetrievalResult(
-                context=(
-                    "AVISO DE DISPONIBILIDADE DE DADOS: Os dados de financiamento eleitoral (TSE) "
-                    "ainda não foram importados para esta base. "
-                    "Esses dados serão adicionados na Fase 2 da plataforma, com cruzamento completo "
-                    "dos registros de doação do TSE para as eleições de 2022. "
-                    "Por enquanto, não é possível consultar quais doadores financiaram quais deputados."
-                ),
-                sources=[],
+        # Aggregate flow by funding source across the whole base
+        flow = (
+            await db.execute(
+                select(
+                    _funding_source_case().label("src"),
+                    func.sum(DonorLink.amount_brl).label("total"),
+                )
+                .join(DonorLink, Donor.id == DonorLink.donor_id)
+                .group_by(text("src"))
+                .order_by(text("total DESC"))
             )
-        lines = ["Maiores doadores (todos os deputados):"]
-        for row in top:
+        ).all()
+        flow_total = sum(row.total or 0 for row in flow) or 1
+
+        lines = ["Origem do financiamento eleitoral 2022 — visão geral:"]
+        for row in flow:
+            pct = (row.total or 0) / flow_total * 100
             lines.append(
-                f"  • {row.name} ({row.sector_group or 'setor desconhecido'})"
-                f" — R$ {row.total:,.2f} para {row.leg_count} deputado(s)"
+                f"  • {_SOURCE_LABEL_PT.get(row.src, row.src)}: "
+                f"R$ {row.total:,.2f} ({pct:.1f}%)"
             )
+
+        if coord:
+            lines.append("")
+            lines.append("Doadores individuais que financiaram múltiplos deputados:")
+            for r in coord:
+                lines.append(
+                    f"  • {r.name} — financiou {r.leg_count} deputados "
+                    f"(R$ {r.total:,.2f} total)"
+                )
+        else:
+            lines.append("")
+            lines.append("(Nenhum doador individual financiou mais de um deputado.)")
+
         return RetrievalResult(context="\n".join(lines), sources=[])
 
+    # ── Legislator named → per-deputy funding profile ─────────────────────────
     pattern = f"%{intent.legislator_name.lower()}%"
     leg_result = await db.execute(
         select(Legislator).where(
@@ -371,44 +432,106 @@ async def _donor_exposure(intent: ClassifyResult, db: AsyncSession) -> Retrieval
             sources=[],
         )
 
-    donor_rows = (
-        await db.execute(
-            select(DonorLink, Donor)
-            .join(Donor, DonorLink.donor_id == Donor.id)
-            .where(DonorLink.legislator_id == leg.id)
-            .order_by(DonorLink.amount_brl.desc())
-            .limit(10)
-        )
-    ).all()
-
     sources: list[dict] = [
         {"type": SOURCE_LEGISLATOR, "id": str(leg.id), "name": leg.display_name or leg.name}
     ]
 
-    if not donor_rows:
+    # 1. Funding-source breakdown for this deputy
+    breakdown = (
+        await db.execute(
+            select(
+                _funding_source_case().label("src"),
+                func.sum(DonorLink.amount_brl).label("total"),
+            )
+            .join(DonorLink, Donor.id == DonorLink.donor_id)
+            .where(DonorLink.legislator_id == leg.id)
+            .group_by(text("src"))
+            .order_by(text("total DESC"))
+        )
+    ).all()
+
+    if not breakdown:
         return RetrievalResult(
             context=(
-                f"AVISO DE DISPONIBILIDADE DE DADOS: O deputado {leg.display_name or leg.name} "
-                f"foi encontrado na base ({leg.state_uf}), mas os dados de financiamento eleitoral "
-                f"do TSE ainda não foram importados. "
-                f"Esses dados cobrem doações de campanha das eleições de 2018 e 2022 e serão "
-                f"adicionados na próxima fase da plataforma."
+                f"O deputado {leg.display_name or leg.name} ({leg.state_uf}) está na "
+                f"base, mas não há registros de doações de campanha vinculadas "
+                f"(eleições 2022)."
             ),
             sources=sources,
         )
 
-    total_received = sum(dl.amount_brl for dl, _ in donor_rows)
+    total = sum(row.total or 0 for row in breakdown) or 1
     lines = [
-        f"Financiamento eleitoral de {leg.display_name or leg.name}:",
-        f"Total recebido (amostra top 10): R$ {total_received:,.2f}",
+        f"Financiamento eleitoral 2022 — {leg.display_name or leg.name} ({leg.state_uf}):",
+        f"Total recebido: R$ {total:,.2f}",
         "",
-        "Principais doadores:",
+        "Origem do dinheiro:",
     ]
-    for dl, donor in donor_rows:
+    for row in breakdown:
+        pct = (row.total or 0) / total * 100
         lines.append(
-            f"  • {donor.name} ({donor.sector_group or 'setor desconhecido'})"
-            f" — R$ {dl.amount_brl:,.2f} em {dl.election_year}"
+            f"  • {_SOURCE_LABEL_PT.get(row.src, row.src)}: "
+            f"R$ {row.total:,.2f} ({pct:.1f}%)"
         )
+
+    # 2. Top individual donors (CPF, excluding party-fund transfers)
+    top_indiv = (
+        await db.execute(
+            select(
+                Donor.name,
+                func.sum(DonorLink.amount_brl).label("total"),
+            )
+            .join(DonorLink, Donor.id == DonorLink.donor_id)
+            .where(
+                DonorLink.legislator_id == leg.id,
+                Donor.entity_type == "pessoa_fisica",
+                ~func.lower(Donor.name).like("%direção%"),
+                ~func.lower(Donor.name).like("%direcao%"),
+            )
+            .group_by(Donor.name)
+            .order_by(text("total DESC"))
+            .limit(7)
+        )
+    ).all()
+
+    if top_indiv:
+        lines.append("")
+        lines.append("Maiores doadores pessoa física:")
+        for r in top_indiv:
+            lines.append(f"  • {r.name} — R$ {r.total:,.2f}")
+
+    # 3. Corporate donors (rare post-ban, but always interesting)
+    top_corp = (
+        await db.execute(
+            select(
+                Donor.name,
+                func.sum(DonorLink.amount_brl).label("total"),
+            )
+            .join(DonorLink, Donor.id == DonorLink.donor_id)
+            .where(
+                DonorLink.legislator_id == leg.id,
+                Donor.entity_type == "pessoa_juridica",
+                ~func.lower(Donor.name).like("%direção%"),
+                ~func.lower(Donor.name).like("%direcao%"),
+            )
+            .group_by(Donor.name)
+            .order_by(text("total DESC"))
+            .limit(5)
+        )
+    ).all()
+
+    if top_corp:
+        lines.append("")
+        lines.append("Doadores pessoa jurídica:")
+        for r in top_corp:
+            lines.append(f"  • {r.name} — R$ {r.total:,.2f}")
+
+    lines.append("")
+    lines.append(
+        "Nota: desde a Lei 13.165/2015, doações de empresas são proibidas, "
+        "exceto em casos legais específicos. A maior parte do financiamento "
+        "vem do FEFC (fundo público distribuído pelos partidos)."
+    )
 
     return RetrievalResult(context="\n".join(lines), sources=sources)
 
