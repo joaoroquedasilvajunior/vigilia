@@ -112,48 +112,62 @@ class CamaraClient:
         date_start: str,
         date_end: str,
         plenary_only: bool = True,
+        chunk_days: int = 90,
     ) -> AsyncGenerator[dict, None]:
         """
         Iterate /votacoes endpoint, yielding voting-session metadata.
-        The API does not accept siglaOrgao as a query param, so we screen
-        client-side when plenary_only=True.
 
-        Yields dicts of: {session_id, bill_camara_id, date, sigla_orgao, descricao}.
-        Sessions with no parseable proposicao reference are skipped.
+        The API rejects multi-year date windows with HTTP 400 (undocumented
+        max range), so we chunk the [date_start, date_end] interval into
+        windows of `chunk_days` days and paginate within each.
+
+        Plenary-only filter is applied client-side because the API ignores
+        siglaOrgao as a query param.
+
+        Yields: {session_id, bill_camara_id, date, sigla_orgao, descricao}.
         """
         import re
-        page = 1
-        while True:
-            data = await self._get("/votacoes", params={
-                "dataInicio": date_start,
-                "dataFim":    date_end,
-                "itens":      100,
-                "pagina":     page,
-                "ordem":      "ASC",
-                "ordenarPor": "dataHoraRegistro",
-            })
-            items = data.get("dados", [])
-            if not items:
-                break
-            for s in items:
-                sigla = s.get("siglaOrgao")
-                if plenary_only and sigla != "PLEN":
-                    continue
-                # Session id format: {bill_camara_id}-{seq}
-                sess_id = s.get("id") or ""
-                m = re.match(r"^(\d+)-", sess_id)
-                if not m:
-                    continue
-                yield {
-                    "session_id":      sess_id,
-                    "bill_camara_id":  int(m.group(1)),
-                    "date":            s.get("data"),
-                    "sigla_orgao":     sigla,
-                    "descricao":       s.get("descricao") or "",
-                }
-            if not any(lnk.get("rel") == "next" for lnk in data.get("links", [])):
-                break
-            page += 1
+        from datetime import datetime, timedelta
+
+        start_dt = datetime.strptime(date_start, "%Y-%m-%d")
+        end_dt   = datetime.strptime(date_end,   "%Y-%m-%d")
+
+        win_start = start_dt
+        while win_start <= end_dt:
+            win_end = min(win_start + timedelta(days=chunk_days - 1), end_dt)
+            page = 1
+            while True:
+                data = await self._get("/votacoes", params={
+                    "dataInicio": win_start.strftime("%Y-%m-%d"),
+                    "dataFim":    win_end.strftime("%Y-%m-%d"),
+                    "itens":      100,
+                    "pagina":     page,
+                    "ordem":      "ASC",
+                    "ordenarPor": "dataHoraRegistro",
+                })
+                items = data.get("dados", [])
+                if not items:
+                    break
+                for s in items:
+                    sigla = s.get("siglaOrgao")
+                    if plenary_only and sigla != "PLEN":
+                        continue
+                    # Session id format: {bill_camara_id}-{seq}
+                    sess_id = s.get("id") or ""
+                    m = re.match(r"^(\d+)-", sess_id)
+                    if not m:
+                        continue
+                    yield {
+                        "session_id":      sess_id,
+                        "bill_camara_id":  int(m.group(1)),
+                        "date":            s.get("data"),
+                        "sigla_orgao":     sigla,
+                        "descricao":       s.get("descricao") or "",
+                    }
+                if not any(lnk.get("rel") == "next" for lnk in data.get("links", [])):
+                    break
+                page += 1
+            win_start = win_end + timedelta(days=1)
 
     async def get_votes_for_bill(self, camara_bill_id: int) -> list[dict]:
         """
