@@ -107,9 +107,11 @@ export default function ProjetosPage() {
   }, [type, theme, highRisk, page]);
 
   return (
-    <main className="max-w-5xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold text-gray-900 mb-1">Projetos de Lei</h1>
-      <p className="text-gray-500 text-sm mb-6">Câmara dos Deputados — 57ª Legislatura</p>
+    <main className="max-w-5xl mx-auto px-4 py-10">
+      <h1 className="font-display text-3xl font-bold text-brasilia mb-2">
+        Projetos de Lei
+      </h1>
+      <p className="text-text-warm text-sm mb-6">Câmara dos Deputados — 57ª Legislatura</p>
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3 mb-6">

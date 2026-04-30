@@ -142,6 +142,15 @@ export const getBills = (params?: {
 
 export const getBill = (id: string) => apiFetch<Bill>(`/bills/${id}`);
 
+// Stats (homepage hero)
+export interface SiteStats {
+  legislators: number;
+  bills: number;
+  votes: number;
+  clusters: number;
+}
+export const getStats = () => apiFetch<SiteStats>(`/stats`);
+
 // Clusters
 export const getClusters = () =>
   apiFetch<{ clusters: BehavioralCluster[] }>(`/clusters`);

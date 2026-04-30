@@ -1,27 +1,62 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/*
+ * Brasília Modernist palette
+ *
+ * Inspired by Niemeyer's curves + the Cerrado:
+ * concrete (concreto), Brasília-night sky (brasilia), buriti palm green (cerrado),
+ * ipê amarelo bark (ochre) and bloom (ipe).
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --color-bg: #F7F4EF;            /* warm off-white — concrete in sunlight */
+  --color-bg-secondary: #EEEAE2;  /* shadow on concrete */
+  --color-dark: #1A1F2E;          /* deep Brasília night sky */
+  --color-green: #1B4332;         /* Cerrado dark green — buriti palm */
+  --color-ochre: #C17D3C;         /* ipê amarelo bark */
+  --color-gold: #E8B84B;          /* ipê amarelo bloom */
+  --color-text: #1A1F2E;          /* dark navy, not pure black */
+  --color-text-secondary: #5C5C4E;/* warm gray — weathered concrete */
+  --color-risk-red: #C0392B;
+  --color-risk-green: #27AE60;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-background: var(--color-bg);
+  --color-foreground: var(--color-text);
+  --color-brasilia: var(--color-dark);
+  --color-cerrado:  var(--color-green);
+  --color-ochre:    var(--color-ochre);
+  --color-ipe:      var(--color-gold);
+  --color-concreto: var(--color-bg);
+  --color-concreto-shadow: var(--color-bg-secondary);
+  --color-text-warm: var(--color-text-secondary);
+  --color-risk-red: var(--color-risk-red);
+  --color-risk-green: var(--color-risk-green);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans:    var(--font-inter);
+  --font-display: var(--font-playfair);
+  --font-mono:    var(--font-jetbrains);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-inter), system-ui, sans-serif;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-playfair), Georgia, serif;
+  letter-spacing: -0.01em;
+}
+
+.font-display { font-family: var(--font-playfair), Georgia, serif; }
+.font-mono { font-family: var(--font-jetbrains), ui-monospace, monospace; }
+
+/* Subtle Niemeyer-inspired structural-line pattern for dark heroes */
+.brasilia-grid {
+  background-image:
+    linear-gradient(rgba(232, 184, 75, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(232, 184, 75, 0.05) 1px, transparent 1px);
+  background-size: 80px 80px;
 }

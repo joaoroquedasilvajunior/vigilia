@@ -96,7 +96,7 @@ function StatusBadge({ status }: { status: string | null }) {
 function ThemeChip({ slug }: { slug: string }) {
   const label = THEME_LABELS[slug] ?? slug;
   return (
-    <span className="text-xs px-2.5 py-1 rounded-full bg-purple-50 text-purple-700 font-medium border border-purple-100">
+    <span className="text-xs px-2.5 py-1 rounded-full bg-cerrado text-white font-medium">
       {label}
     </span>
   );
@@ -132,10 +132,10 @@ export default async function BillDetailPage({
   const summary = bill.summary_official ?? bill.summary_ai ?? null;
 
   return (
-    <main className="max-w-4xl mx-auto px-4 py-8">
+    <main className="max-w-4xl mx-auto px-4 py-10">
       <Link
         href="/projetos"
-        className="text-sm text-blue-600 hover:underline mb-4 inline-block"
+        className="text-sm text-cerrado hover:text-ochre transition-colors mb-4 inline-block"
       >
         ← Todos os projetos
       </Link>
@@ -143,24 +143,24 @@ export default async function BillDetailPage({
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-center gap-2 mb-3 flex-wrap">
-          <span className="text-sm font-bold text-blue-700 bg-blue-50 px-3 py-1 rounded-lg">
+          <span className="text-sm font-mono font-bold text-white bg-brasilia px-3 py-1 rounded-md">
             {bill.type} {bill.number}/{bill.year}
           </span>
           <StatusBadge status={bill.status} />
           {bill.urgency_regime && (
-            <span className="text-xs px-2.5 py-1 rounded-full bg-orange-50 text-orange-700 font-medium border border-orange-100">
+            <span className="text-xs px-2.5 py-1 rounded-full bg-ochre text-white font-medium">
               urgência
             </span>
           )}
           {bill.secrecy_vote && (
-            <span className="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 font-medium">
+            <span className="text-xs px-2.5 py-1 rounded-full bg-concreto-shadow text-text-warm font-medium">
               votação secreta
             </span>
           )}
           <RiskBadge score={bill.const_risk_score} />
         </div>
 
-        <h1 className="text-2xl font-bold text-gray-900 leading-snug">
+        <h1 className="font-display text-2xl sm:text-3xl font-bold text-brasilia leading-snug">
           {bill.title}
         </h1>
       </div>

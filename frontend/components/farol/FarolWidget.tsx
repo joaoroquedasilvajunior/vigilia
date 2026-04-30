@@ -202,7 +202,7 @@ export default function FarolWidget() {
       {/* Floating toggle button */}
       <button
         onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center"
+        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-cerrado text-ipe shadow-lg hover:brightness-110 active:scale-95 transition-all flex items-center justify-center"
         aria-label={open ? "Fechar Farol" : "Abrir Farol"}
       >
         {open ? (
@@ -221,19 +221,19 @@ export default function FarolWidget() {
         <div className="fixed inset-0 sm:inset-auto sm:bottom-24 sm:right-6 z-50 sm:w-96 sm:max-w-[calc(100vw-3rem)] h-[100dvh] sm:h-auto sm:max-h-[min(600px,calc(100dvh-8rem))] bg-white sm:rounded-2xl shadow-2xl sm:border sm:border-gray-200 flex flex-col overflow-hidden"
         >
           {/* Header */}
-          <div className="bg-blue-600 text-white px-4 py-3 flex items-center justify-between shrink-0">
+          <div className="bg-brasilia text-white px-4 py-3 flex items-center justify-between shrink-0 border-b-2 border-ochre/60">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-sm font-bold">
+              <div className="w-8 h-8 rounded-full bg-ipe text-brasilia flex items-center justify-center text-sm font-display font-bold">
                 F
               </div>
               <div>
-                <p className="text-sm font-semibold leading-tight">Farol</p>
-                <p className="text-xs text-blue-200 leading-tight">Assistente de transparência</p>
+                <p className="text-sm font-display font-semibold leading-tight">Farol</p>
+                <p className="text-xs text-gray-400 leading-tight">Assistente de transparência</p>
               </div>
             </div>
             <button
               onClick={() => setOpen(false)}
-              className="text-blue-200 hover:text-white transition-colors p-1"
+              className="text-gray-400 hover:text-ipe transition-colors p-1"
               aria-label="Fechar"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -249,8 +249,8 @@ export default function FarolWidget() {
                 <div
                   className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
                     msg.role === "user"
-                      ? "bg-blue-600 text-white rounded-br-sm"
-                      : "bg-gray-100 text-gray-900 rounded-bl-sm"
+                      ? "bg-cerrado text-white rounded-br-sm"
+                      : "bg-concreto-shadow text-brasilia rounded-bl-sm"
                   }`}
                 >
                   {msg.role === "assistant" ? (
@@ -298,14 +298,14 @@ export default function FarolWidget() {
                 }
               }}
               placeholder="Pergunte sobre deputados, projetos..."
-              className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+              className="flex-1 text-sm border border-concreto-shadow rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-ochre/60 disabled:opacity-50"
               disabled={loading}
               maxLength={400}
             />
             <button
               onClick={send}
               disabled={loading || !input.trim()}
-              className="px-3 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-40 transition-colors active:scale-95"
+              className="px-3 py-2 bg-cerrado text-ipe rounded-xl hover:brightness-110 disabled:opacity-40 transition-all active:scale-95"
               aria-label="Enviar"
             >
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">

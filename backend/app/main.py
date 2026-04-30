@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1.routes import bills, clusters, farol, legislators, sync
+from app.api.v1.routes import bills, clusters, farol, legislators, stats, sync
 from app.core.config import settings
 
 logging.basicConfig(level=settings.log_level)
@@ -34,6 +34,7 @@ app.include_router(bills.router, prefix="/api/v1")
 app.include_router(farol.router, prefix="/api/v1")
 app.include_router(sync.router, prefix="/api/v1")
 app.include_router(clusters.router, prefix="/api/v1")
+app.include_router(stats.router, prefix="/api/v1")
 
 
 @app.get("/health")

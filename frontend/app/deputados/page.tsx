@@ -54,9 +54,11 @@ export default function DeputadosPage() {
     : legislators;
 
   return (
-    <main className="max-w-6xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold text-gray-900 mb-1">Deputados Federais</h1>
-      <p className="text-gray-500 text-sm mb-6">57ª Legislatura (2023–2027)</p>
+    <main className="max-w-6xl mx-auto px-4 py-10">
+      <h1 className="font-display text-3xl font-bold text-brasilia mb-2">
+        Deputados Federais
+      </h1>
+      <p className="text-text-warm text-sm mb-6">57ª Legislatura (2023–2027)</p>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-6">
