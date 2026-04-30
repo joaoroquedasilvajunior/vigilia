@@ -106,7 +106,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               >
                 GitHub
               </a>
-              <Link href="/coalicoes" className="hover:text-ipe transition-colors">
+              <Link href="/metodologia" className="hover:text-ipe transition-colors">
                 Metodologia
               </Link>
               <a
