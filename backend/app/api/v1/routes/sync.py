@@ -15,6 +15,8 @@ from app.ingestion.sync_pipeline import (
     sync_votes_for_bill,
 )
 from app.analysis.clustering import compute_clusters
+from app.analysis.party_discipline import compute_discipline_and_absence
+from app.ingestion.orientation_pipeline import sync_party_orientations
 from app.ingestion.tag_pipeline import tag_bills
 from app.ingestion.tse_pipeline import inspect_donors_csv, sync_donors
 
@@ -57,6 +59,32 @@ async def trigger_sync_votes(
 ):
     background_tasks.add_task(sync_votes_for_bill, camara_bill_id)
     return {"status": "queued", "job": "sync_votes_for_bill", "camara_bill_id": camara_bill_id}
+
+
+@router.post("/orientations")
+async def trigger_sync_orientations(
+    background_tasks: BackgroundTasks,
+    _: Annotated[None, Depends(_verify_secret)],
+):
+    """
+    Backfill votes.party_orientation from Câmara /votacoes/{id}/orientacoes.
+    Required prerequisite for /sync/discipline. ~6-10 min runtime.
+    """
+    background_tasks.add_task(sync_party_orientations)
+    return {"status": "queued", "job": "sync_party_orientations"}
+
+
+@router.post("/discipline")
+async def trigger_compute_discipline(
+    background_tasks: BackgroundTasks,
+    _: Annotated[None, Depends(_verify_secret)],
+):
+    """
+    Compute legislators.party_discipline_score, legislators.absence_rate,
+    and parties.cohesion_score in pure SQL. Run after /sync/orientations.
+    """
+    background_tasks.add_task(compute_discipline_and_absence)
+    return {"status": "queued", "job": "compute_discipline"}
 
 
 @router.post("/clusters")

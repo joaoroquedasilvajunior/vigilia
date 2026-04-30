@@ -181,6 +181,28 @@ class CamaraClient:
                 )
             win_start = win_end + timedelta(days=1)
 
+    async def get_orientations_for_session(self, session_camara_id: str) -> list[dict]:
+        """
+        Fetch the per-bloc/per-party voting orientations for a session.
+
+        Returns a list of normalized rows: {sigla, orientation, tipo}, where
+        - sigla: bloc/party label as returned by Câmara (e.g. "PL",
+          "Bl MdbPsdRepPodePsc", "Fdr PT-PCdoB-PV", "Governo")
+        - orientation: normalized to vote-value vocabulary ("sim", "não",
+          "obstrucao", "livre"); None for unmapped values like leadership
+          orientations the API doesn't translate
+        - tipo: "P" (party-level) | "B" (bloc-level)
+        """
+        data = await self._get(f"/votacoes/{session_camara_id}/orientacoes")
+        out: list[dict] = []
+        for r in data.get("dados", []):
+            out.append({
+                "sigla":       (r.get("siglaPartidoBloco") or "").strip(),
+                "orientation": self._normalize_orientation(r.get("orientacaoVoto")),
+                "tipo":        r.get("codTipoLideranca"),
+            })
+        return out
+
     async def get_votes_for_bill(self, camara_bill_id: int) -> list[dict]:
         """
         Fetch all individual votes for a bill.
