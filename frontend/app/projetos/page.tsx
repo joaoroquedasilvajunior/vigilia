@@ -17,6 +17,10 @@ const THEMES = [
   { slug: "direitos-lgbtqia", label: "Direitos LGBTQIA+" },
 ];
 
+const THEME_LABELS: Record<string, string> = Object.fromEntries(
+  THEMES.map((t) => [t.slug, t.label]),
+);
+
 function RiskBadge({ score }: { score: number | null }) {
   if (score === null) return null;
   if (score > 0.6)
@@ -42,31 +46,36 @@ function BillCard({ bill }: { bill: Bill }) {
   return (
     <Link
       href={`/projetos/${bill.id}`}
-      className="block rounded-xl border border-gray-200 p-4 hover:border-blue-300 hover:shadow-sm transition-all"
+      className="block rounded-lg border border-concreto-shadow bg-concreto p-4 hover:border-l-[3px] hover:border-l-ochre transition-all"
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-            <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <span className="text-xs font-mono font-bold text-white bg-brasilia px-2 py-0.5 rounded-md">
               {bill.type} {bill.number}/{bill.year}
             </span>
             {bill.urgency_regime && (
-              <span className="text-xs px-2 py-0.5 rounded bg-orange-50 text-orange-600 font-medium">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-ochre text-white font-medium">
                 urgência
               </span>
             )}
             {bill.secrecy_vote && (
-              <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-concreto-shadow text-text-warm">
                 votação secreta
               </span>
             )}
           </div>
-          <p className="text-sm text-gray-900 font-medium line-clamp-2">{bill.title}</p>
-          <div className="flex items-center gap-2 mt-2 flex-wrap">
-            <span className="text-xs text-gray-400">{bill.status ?? "Em tramitação"}</span>
+          <p className="text-sm text-brasilia font-medium line-clamp-2">{bill.title}</p>
+          <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+            <span className="text-xs text-text-warm italic">
+              {bill.status ?? "Em tramitação"}
+            </span>
             {(bill.theme_tags ?? []).slice(0, 3).map((t) => (
-              <span key={t} className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">
-                {t}
+              <span
+                key={t}
+                className="text-xs px-2 py-0.5 bg-cerrado text-white rounded-full font-medium"
+              >
+                {THEME_LABELS[t] ?? t}
               </span>
             ))}
           </div>
