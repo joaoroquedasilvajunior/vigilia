@@ -27,6 +27,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/projetos" className="hover:text-gray-900 transition-colors">
                 Projetos
               </Link>
+              <Link href="/coalicoes" className="hover:text-gray-900 transition-colors">
+                Coalizões
+              </Link>
             </div>
           </div>
         </nav>

@@ -24,6 +24,22 @@ export interface Legislator {
   absence_rate: number | null;
 }
 
+export interface ClusterMemberPreview {
+  id: string;
+  name: string;
+  state_uf: string | null;
+  photo_url: string | null;
+  party_acronym: string | null;
+}
+
+export interface ClusterMember {
+  id: string;
+  name: string;
+  state_uf: string | null;
+  party: string | null;
+  photo_url: string | null;
+}
+
 export interface BehavioralCluster {
   id: string;
   label: string | null;
@@ -35,6 +51,15 @@ export interface BehavioralCluster {
   algorithm_params: Record<string, unknown> | null;
   computed_at: string | null;
   party_distribution: Record<string, number>;
+  top_members: ClusterMemberPreview[];
+}
+
+export interface ClusterMembersResponse {
+  cluster_id: string;
+  cluster_label: string | null;
+  member_count: number | null;
+  cohesion_score: number | null;
+  members: ClusterMember[];
 }
 
 export interface Bill {
@@ -120,3 +145,6 @@ export const getBill = (id: string) => apiFetch<Bill>(`/bills/${id}`);
 // Clusters
 export const getClusters = () =>
   apiFetch<{ clusters: BehavioralCluster[] }>(`/clusters`);
+
+export const getClusterMembers = (clusterId: string) =>
+  apiFetch<ClusterMembersResponse>(`/clusters/${clusterId}/members`);
