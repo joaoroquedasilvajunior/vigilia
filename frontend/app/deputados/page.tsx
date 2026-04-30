@@ -96,6 +96,7 @@ export default function DeputadosPage() {
                 <tr>
                   <th className="px-4 py-3 text-left">Deputado</th>
                   <th className="px-4 py-3 text-left">UF</th>
+                  <th className="px-4 py-3 text-left">Partido</th>
                   <th className="px-4 py-3 text-left">Alinhamento CF/88</th>
                   <th className="px-4 py-3 text-left">Ausências</th>
                 </tr>
@@ -122,6 +123,15 @@ export default function DeputadosPage() {
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-gray-500">{l.state_uf}</td>
+                    <td className="px-4 py-3">
+                      {l.party_acronym ? (
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded bg-gray-100 text-gray-700">
+                          {l.party_acronym}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300 text-xs">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <AlignmentBadge score={l.const_alignment_score} />
                     </td>

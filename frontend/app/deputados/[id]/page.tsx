@@ -1,4 +1,4 @@
-import { getLegislator, getLegislatorVotes } from "@/lib/api";
+import { getLegislator, getLegislatorVotes, getClusters } from "@/lib/api";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 
@@ -39,15 +39,23 @@ export default async function DeputadoProfilePage({
 }) {
   const { id } = await params;
 
-  let legislator, votesData;
+  let legislator, votesData, clustersData;
   try {
-    [legislator, votesData] = await Promise.all([
+    [legislator, votesData, clustersData] = await Promise.all([
       getLegislator(id),
       getLegislatorVotes(id, 1),
+      getClusters().catch(() => ({ clusters: [] })),
     ]);
   } catch {
     notFound();
   }
+
+  const cluster =
+    legislator.behavioral_cluster_id != null
+      ? clustersData.clusters.find(
+          (c) => c.id === legislator.behavioral_cluster_id,
+        ) ?? null
+      : null;
 
   const votes = votesData.items;
   const voteBreakdown = {
@@ -112,6 +120,16 @@ export default async function DeputadoProfilePage({
                   ? `${(legislator.absence_rate * 100).toFixed(1)}%`
                   : "—"}
               </span>
+            </div>
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-gray-500">Coalizão comportamental</span>
+              {cluster?.label ? (
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-700">
+                  {cluster.label}
+                </span>
+              ) : (
+                <span className="text-gray-400">—</span>
+              )}
             </div>
           </div>
         </div>

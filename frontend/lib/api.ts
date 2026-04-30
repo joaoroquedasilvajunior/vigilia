@@ -17,9 +17,24 @@ export interface Legislator {
   chamber: "camara" | "senado" | null;
   state_uf: string;
   photo_url: string | null;
+  party_acronym: string | null;
+  behavioral_cluster_id: string | null;
   const_alignment_score: number | null;
   party_discipline_score: number | null;
   absence_rate: number | null;
+}
+
+export interface BehavioralCluster {
+  id: string;
+  label: string | null;
+  description: string | null;
+  dominant_themes: string[] | null;
+  member_count: number | null;
+  cohesion_score: number | null;
+  algorithm: string | null;
+  algorithm_params: Record<string, unknown> | null;
+  computed_at: string | null;
+  party_distribution: Record<string, number>;
 }
 
 export interface Bill {
@@ -101,3 +116,7 @@ export const getBills = (params?: {
 };
 
 export const getBill = (id: string) => apiFetch<Bill>(`/bills/${id}`);
+
+// Clusters
+export const getClusters = () =>
+  apiFetch<{ clusters: BehavioralCluster[] }>(`/clusters`);

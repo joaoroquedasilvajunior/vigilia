@@ -20,28 +20,25 @@ async def list_legislators(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ):
-    q = select(Legislator)
+    q = select(Legislator, Party).outerjoin(Party, Legislator.nominal_party_id == Party.id)
     if state:
         q = q.where(Legislator.state_uf == state.upper())
     if chamber:
         q = q.where(Legislator.chamber == chamber)
     if party:
-        q = q.join(Party, Legislator.nominal_party_id == Party.id).where(
-            func.upper(Party.acronym) == party.upper()
-        )
+        q = q.where(func.upper(Party.acronym) == party.upper())
 
     total_result = await db.execute(select(func.count()).select_from(q.subquery()))
     total = total_result.scalar_one()
 
     q = q.offset((page - 1) * page_size).limit(page_size)
-    result = await db.execute(q)
-    legislators = result.scalars().all()
+    rows = (await db.execute(q)).all()
 
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
-        "items": [_serialize_legislator(l) for l in legislators],
+        "items": [_serialize_legislator(l, p) for l, p in rows],
     }
 
 
@@ -50,11 +47,16 @@ async def get_legislator(
     legislator_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    result = await db.execute(select(Legislator).where(Legislator.id == legislator_id))
-    legislator = result.scalar_one_or_none()
-    if not legislator:
+    result = await db.execute(
+        select(Legislator, Party)
+        .outerjoin(Party, Legislator.nominal_party_id == Party.id)
+        .where(Legislator.id == legislator_id)
+    )
+    row = result.one_or_none()
+    if not row:
         raise HTTPException(404, "Legislador não encontrado")
-    return _serialize_legislator(legislator)
+    legislator, party = row
+    return _serialize_legislator(legislator, party)
 
 
 @router.get("/{legislator_id}/votes")
@@ -103,7 +105,7 @@ async def get_legislator_votes(
     }
 
 
-def _serialize_legislator(l: Legislator) -> dict:
+def _serialize_legislator(l: Legislator, p: Party | None = None) -> dict:
     return {
         "id": str(l.id),
         "camara_id": l.camara_id,
@@ -112,6 +114,8 @@ def _serialize_legislator(l: Legislator) -> dict:
         "chamber": l.chamber,
         "state_uf": l.state_uf,
         "photo_url": l.photo_url,
+        "party_acronym": p.acronym if p else None,
+        "behavioral_cluster_id": str(l.behavioral_cluster_id) if l.behavioral_cluster_id else None,
         "const_alignment_score": l.const_alignment_score,
         "party_discipline_score": l.party_discipline_score,
         "absence_rate": l.absence_rate,

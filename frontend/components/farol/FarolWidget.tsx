@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import ReactMarkdown from "react-markdown";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -253,7 +254,13 @@ export default function FarolWidget() {
                       : "bg-gray-100 text-gray-900 rounded-bl-sm"
                   }`}
                 >
-                  {msg.content}
+                  {msg.role === "assistant" ? (
+                    <div className="prose prose-sm prose-gray max-w-none prose-p:my-1.5 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0 prose-strong:text-gray-900 prose-a:text-blue-600">
+                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    </div>
+                  ) : (
+                    msg.content
+                  )}
                 </div>
 
                 {/* Sources */}
@@ -302,8 +309,8 @@ export default function FarolWidget() {
               className="px-3 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-40 transition-colors active:scale-95"
               aria-label="Enviar"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
               </svg>
             </button>
           </div>
