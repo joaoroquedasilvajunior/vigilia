@@ -1,8 +1,24 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { getClusters, type BehavioralCluster, type ClusterMemberPreview } from "@/lib/api";
 
 // Render per-request — listing depends on live cluster data, not prerenderable
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Coalizões Comportamentais",
+  description:
+    "Mapa das coalizões reais do Congresso brasileiro, baseado em " +
+    "votações — não em filiação partidária.",
+  openGraph: {
+    type: "website",
+    title: "Coalizões Comportamentais — Vigília",
+    description:
+      "Mapa das coalizões reais do Congresso brasileiro, baseado em " +
+      "votações — não em filiação partidária.",
+    images: [{ url: "/og-default.png", width: 1200, height: 630 }],
+  },
+};
 
 const THEME_LABELS: Record<string, string> = {
   trabalho: "Trabalho",
@@ -103,7 +119,7 @@ function ClusterCard({ c }: { c: BehavioralCluster }) {
       {/* Top members */}
       {c.top_members.length > 0 && (
         <div className="mt-5">
-          <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {c.top_members.slice(0, 6).map((m) => (
               <MemberThumb key={m.id} m={m} />
             ))}

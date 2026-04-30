@@ -1,6 +1,55 @@
+import type { Metadata } from "next";
 import { getLegislator, getLegislatorVotes, getClusters } from "@/lib/api";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  try {
+    const [leg, votesData, clustersData] = await Promise.all([
+      getLegislator(id),
+      getLegislatorVotes(id, 1).catch(() => ({ total: 0, items: [] as never[] })),
+      getClusters().catch(() => ({ clusters: [] as never[] })),
+    ]);
+    const name = leg.display_name ?? leg.name;
+    const cluster = leg.behavioral_cluster_id
+      ? clustersData.clusters.find((c) => c.id === leg.behavioral_cluster_id)
+      : null;
+    const align =
+      leg.const_alignment_score !== null
+        ? leg.const_alignment_score.toFixed(2)
+        : "—";
+    const desc = `Deputado Federal por ${leg.state_uf} (${
+      leg.party_acronym ?? "sem partido"
+    }). ${votesData.total} votações registradas. Coalizão: ${
+      cluster?.label ?? "—"
+    }. Alinhamento CF/88: ${align}.`;
+    return {
+      title: name,
+      description: desc,
+      openGraph: {
+        type: "profile",
+        title: `${name} — Vigília`,
+        description: desc,
+        images: leg.photo_url
+          ? [{ url: leg.photo_url, alt: name }]
+          : [{ url: "/og-default.png", width: 1200, height: 630 }],
+      },
+      twitter: {
+        card: "summary_large_image",
+        title: `${name} — Vigília`,
+        description: desc,
+        images: leg.photo_url ? [leg.photo_url] : ["/og-default.png"],
+      },
+    };
+  } catch {
+    return { title: "Deputado" };
+  }
+}
 
 function RiskBadge({ score }: { score: number | null }) {
   if (score === null) return null;
@@ -72,20 +121,20 @@ export default async function DeputadoProfilePage({
       </Link>
 
       {/* Header */}
-      <div className="flex items-start gap-6 mb-8">
+      <div className="flex items-start gap-4 sm:gap-6 mb-8">
         {legislator.photo_url ? (
           <img
             src={legislator.photo_url}
             alt={legislator.display_name ?? legislator.name}
-            className="w-24 h-24 rounded-2xl object-cover ring-2 ring-gray-200"
+            className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-cover ring-2 ring-gray-200 shrink-0"
           />
         ) : (
-          <div className="w-24 h-24 rounded-2xl bg-gray-200 flex items-center justify-center text-3xl text-gray-500 font-bold">
+          <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-gray-200 flex items-center justify-center text-2xl sm:text-3xl text-gray-500 font-bold shrink-0">
             {(legislator.display_name ?? legislator.name).charAt(0)}
           </div>
         )}
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 break-words">
             {legislator.display_name ?? legislator.name}
           </h1>
           <p className="text-gray-500 text-sm mt-1">

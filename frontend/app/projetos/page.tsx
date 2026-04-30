@@ -112,11 +112,11 @@ export default function ProjetosPage() {
       <p className="text-gray-500 text-sm mb-6">Câmara dos Deputados — 57ª Legislatura</p>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-3 mb-6">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3 mb-6">
         <select
           value={type}
           onChange={(e) => { setType(e.target.value); setPage(1); }}
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full sm:w-auto"
         >
           <option value="">Todos os tipos</option>
           {BILL_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -125,7 +125,7 @@ export default function ProjetosPage() {
         <select
           value={theme}
           onChange={(e) => { setTheme(e.target.value); setPage(1); }}
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full sm:w-auto"
         >
           <option value="">Todos os temas</option>
           {THEMES.map((t) => <option key={t.slug} value={t.slug}>{t.label}</option>)}

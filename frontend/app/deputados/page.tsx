@@ -90,7 +90,9 @@ export default function DeputadosPage() {
       ) : (
         <>
           <p className="text-xs text-gray-400 mb-3">{total} deputados encontrados</p>
-          <div className="overflow-x-auto rounded-xl border border-gray-200">
+
+          {/* Desktop table — hidden on mobile */}
+          <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wide">
                 <tr>
@@ -145,6 +147,38 @@ export default function DeputadosPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Mobile card list — hidden on md+ */}
+          <ul className="md:hidden space-y-2">
+            {filtered.map((l) => (
+              <li key={l.id}>
+                <Link
+                  href={`/deputados/${l.id}`}
+                  className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50/40 transition-all group"
+                >
+                  {l.photo_url ? (
+                    <img
+                      src={l.photo_url}
+                      alt={l.display_name ?? l.name}
+                      className="w-10 h-10 rounded-full object-cover ring-1 ring-gray-200 shrink-0"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 text-sm font-bold shrink-0">
+                      {(l.display_name ?? l.name).charAt(0)}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 group-hover:text-blue-700 transition-colors truncate">
+                      {l.display_name ?? l.name}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {l.party_acronym ?? "—"} · {l.state_uf}
+                    </p>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
 
           {/* Pagination */}
           <div className="flex justify-between items-center mt-4 text-sm text-gray-600">

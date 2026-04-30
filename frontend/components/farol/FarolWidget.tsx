@@ -216,10 +216,9 @@ export default function FarolWidget() {
         )}
       </button>
 
-      {/* Chat panel */}
+      {/* Chat panel — full-screen on mobile, anchored popup on sm+ */}
       {open && (
-        <div className="fixed bottom-24 right-6 z-50 w-96 max-w-[calc(100vw-3rem)] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden"
-          style={{ maxHeight: "min(600px, calc(100dvh - 8rem))" }}
+        <div className="fixed inset-0 sm:inset-auto sm:bottom-24 sm:right-6 z-50 sm:w-96 sm:max-w-[calc(100vw-3rem)] h-[100dvh] sm:h-auto sm:max-h-[min(600px,calc(100dvh-8rem))] bg-white sm:rounded-2xl shadow-2xl sm:border sm:border-gray-200 flex flex-col overflow-hidden"
         >
           {/* Header */}
           <div className="bg-blue-600 text-white px-4 py-3 flex items-center justify-between shrink-0">

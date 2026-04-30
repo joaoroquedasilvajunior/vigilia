@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.farol.classifier import ClassifyResult
 from app.models import (
+    BehavioralCluster,
     Bill,
     BillConstitutionMapping,
     Donor,
@@ -45,6 +46,7 @@ async def retrieve(intent: ClassifyResult, db: AsyncSession) -> RetrievalResult:
         "donor_exposure": _donor_exposure,
         "theme_filter": _theme_filter,
         "constitutional_risk": _constitutional_risk,
+        "coalition_map": _coalition_map,
         "general": _general,
     }
     handler = handlers.get(intent.category, _general)
@@ -621,6 +623,156 @@ async def _constitutional_risk(intent: ClassifyResult, db: AsyncSession) -> Retr
             f" | Artigos conflitantes: {conflict_count}"
             f"{' | URGÊNCIA' if bill.urgency_regime else ''}"
         )
+
+    return RetrievalResult(context="\n".join(lines), sources=sources)
+
+
+SOURCE_CLUSTER = "cluster"
+
+
+async def _coalition_map(intent: ClassifyResult, db: AsyncSession) -> RetrievalResult:
+    """
+    Two modes:
+      A) Specific coalition (intent.keyword has a name like "Bolsonarista" /
+         "Governista" / "Centrão") — fuzzy ILIKE match, return up to 30
+         members with party + state, plus cohesion + dominant themes.
+      B) Overview (no keyword) — list every cluster with member_count, top
+         5 parties, and dominant themes.
+    """
+    keyword = (intent.keyword or "").strip()
+
+    # ── Mode B: overview ────────────────────────────────────────────────────
+    if not keyword:
+        cluster_rows = (
+            await db.execute(
+                select(BehavioralCluster).order_by(
+                    BehavioralCluster.member_count.desc().nullslast()
+                )
+            )
+        ).scalars().all()
+        if not cluster_rows:
+            return RetrievalResult(
+                context=(
+                    "Nenhuma coalizão comportamental foi calculada ainda. "
+                    "As coalizões são geradas a partir do histórico real "
+                    "de votações dos deputados."
+                ),
+                sources=[],
+            )
+
+        # Party distribution per cluster — single query
+        party_dist_rows = (
+            await db.execute(
+                select(
+                    Legislator.behavioral_cluster_id,
+                    Party.acronym,
+                    func.count(Legislator.id).label("n"),
+                )
+                .outerjoin(Party, Legislator.nominal_party_id == Party.id)
+                .where(Legislator.behavioral_cluster_id.is_not(None))
+                .group_by(Legislator.behavioral_cluster_id, Party.acronym)
+            )
+        ).all()
+        party_dist: dict[str, list[tuple[str, int]]] = {}
+        for r in party_dist_rows:
+            cid = str(r.behavioral_cluster_id)
+            party_dist.setdefault(cid, []).append((r.acronym or "(sem)", r.n))
+
+        lines = [
+            f"Coalizões comportamentais do Congresso ({len(cluster_rows)} blocos identificados):",
+            "",
+        ]
+        sources: list[dict] = []
+        for c in cluster_rows:
+            top_parties = sorted(party_dist.get(str(c.id), []), key=lambda x: -x[1])[:5]
+            parties_str = ", ".join(f"{p} ({n})" for p, n in top_parties) or "—"
+            cohesion_pct = f"{round((c.cohesion_score or 0) * 100)}%"
+            themes = ", ".join((c.dominant_themes or [])[:4]) or "—"
+            lines.append(f"• **{c.label}** — {c.member_count or 0} deputados, cohesão {cohesion_pct}")
+            lines.append(f"  Partidos: {parties_str}")
+            lines.append(f"  Temas: {themes}")
+            lines.append("")
+            sources.append({
+                "type": SOURCE_CLUSTER,
+                "id": str(c.id),
+                "label": c.label,
+            })
+        return RetrievalResult(context="\n".join(lines).strip(), sources=sources)
+
+    # ── Mode A: specific coalition ─────────────────────────────────────────
+    cluster = (
+        await db.execute(
+            select(BehavioralCluster)
+            .where(BehavioralCluster.label.ilike(f"%{keyword}%"))
+            .order_by(BehavioralCluster.member_count.desc().nullslast())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if not cluster:
+        return RetrievalResult(
+            context=(
+                f"Nenhuma coalizão correspondente a '{keyword}' foi encontrada. "
+                f"As coalizões disponíveis são geradas a partir das votações; "
+                f"você pode pedir 'quais são as coalizões do Congresso?' "
+                f"para ver a lista completa."
+            ),
+            sources=[],
+        )
+
+    # Members of this cluster (capped at 30)
+    member_rows = (
+        await db.execute(
+            select(Legislator, Party)
+            .outerjoin(Party, Legislator.nominal_party_id == Party.id)
+            .where(Legislator.behavioral_cluster_id == cluster.id)
+            .order_by(Party.acronym, Legislator.display_name)
+            .limit(30)
+        )
+    ).all()
+
+    # Party tally (full, even if member preview is capped)
+    party_tally_rows = (
+        await db.execute(
+            select(Party.acronym, func.count(Legislator.id).label("n"))
+            .outerjoin(Party, Legislator.nominal_party_id == Party.id)
+            .where(Legislator.behavioral_cluster_id == cluster.id)
+            .group_by(Party.acronym)
+            .order_by(func.count(Legislator.id).desc())
+        )
+    ).all()
+    parties_str = ", ".join(f"{r.acronym or '(sem)'} ({r.n})" for r in party_tally_rows[:8])
+
+    cohesion_pct = f"{round((cluster.cohesion_score or 0) * 100)}%"
+    themes = ", ".join((cluster.dominant_themes or [])[:5]) or "—"
+
+    lines = [
+        f"## {cluster.label}",
+        "",
+        f"**{cluster.member_count or 0} deputados** · cohesão **{cohesion_pct}**",
+        f"Partidos representados: {parties_str}",
+        f"Temas dominantes: {themes}",
+        "",
+        f"Membros (até 30 mais relevantes por partido):",
+    ]
+    sources: list[dict] = [{
+        "type": SOURCE_CLUSTER,
+        "id": str(cluster.id),
+        "label": cluster.label,
+    }]
+    for leg, party in member_rows:
+        party_str = party.acronym if party else "—"
+        lines.append(
+            f"  • {leg.display_name or leg.name} ({party_str}/{leg.state_uf})"
+        )
+        sources.append({
+            "type": SOURCE_LEGISLATOR,
+            "id": str(leg.id),
+            "name": leg.display_name or leg.name,
+        })
+
+    if (cluster.member_count or 0) > 30:
+        lines.append(f"  … e mais {cluster.member_count - 30} deputados.")
 
     return RetrievalResult(context="\n".join(lines), sources=sources)
 

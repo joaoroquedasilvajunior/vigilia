@@ -19,6 +19,7 @@ CATEGORIES = (
     "donor_exposure",
     "theme_filter",
     "constitutional_risk",
+    "coalition_map",
     "general",
 )
 
@@ -54,6 +55,7 @@ Regras de classificação:
 - donor_exposure: financiamento, doadores, quem financia, dinheiro de campanha
 - theme_filter: projetos sobre um tema (saúde, educação, etc.)
 - constitutional_risk: risco constitucional, inconstitucional, CF/88
+- coalition_map: coalizão comportamental, bloco de votação, bancada, "Bloco Bolsonarista", "Coalização Governista", "Centrão", "quais são as coalizões", quais deputados pertencem a um bloco. Coloque o nome da coalizão (ex: "Bolsonarista", "Governista", "Centrão") no campo keyword quando houver.
 - general: qualquer outra coisa
 
 Pergunta: {query}"""

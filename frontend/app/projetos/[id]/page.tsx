@@ -1,6 +1,42 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getBill } from "@/lib/api";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  try {
+    const bill = await getBill(id);
+    const head = `${bill.type ?? "PL"} ${bill.number}/${bill.year}`;
+    const baseDesc = (bill.title ?? "").slice(0, 155);
+    const riskPrefix =
+      bill.const_risk_score !== null && bill.const_risk_score > 0.6
+        ? "⚠️ Alto risco constitucional. "
+        : "";
+    return {
+      title: head,
+      description: riskPrefix + baseDesc,
+      openGraph: {
+        type: "article",
+        title: `${head} — Vigília`,
+        description: riskPrefix + baseDesc,
+        images: [{ url: "/og-default.png", width: 1200, height: 630 }],
+      },
+      twitter: {
+        card: "summary_large_image",
+        title: `${head} — Vigília`,
+        description: riskPrefix + baseDesc,
+        images: ["/og-default.png"],
+      },
+    };
+  } catch {
+    return { title: "Projeto de lei" };
+  }
+}
 
 const THEME_LABELS: Record<string, string> = {
   trabalho: "Trabalho",

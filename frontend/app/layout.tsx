@@ -6,9 +6,38 @@ import FarolWidget from "@/components/farol/FarolWidget";
 
 const geist = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 
+const SITE_URL = "https://plataforma-vigilia.vercel.app";
+
 export const metadata: Metadata = {
-  title: "Vigília — Monitoramento Legislativo",
-  description: "Transparência no Congresso Nacional brasileiro",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: "Vigília — Transparência no Congresso Nacional",
+    template: "%s · Vigília",
+  },
+  description:
+    "Acompanhe votações, doadores e o alinhamento constitucional dos " +
+    "deputados federais brasileiros. Dados abertos, análise independente.",
+  alternates: { canonical: SITE_URL },
+  robots: { index: true, follow: true },
+  openGraph: {
+    type: "website",
+    siteName: "Vigília",
+    url: SITE_URL,
+    title: "Vigília — Transparência no Congresso Nacional",
+    description:
+      "Acompanhe votações, doadores e o alinhamento constitucional dos " +
+      "deputados federais brasileiros.",
+    locale: "pt_BR",
+    images: [{ url: "/og-default.png", width: 1200, height: 630, alt: "Vigília" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Vigília — Transparência no Congresso Nacional",
+    description:
+      "Acompanhe votações, doadores e o alinhamento constitucional dos " +
+      "deputados federais brasileiros.",
+    images: ["/og-default.png"],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
