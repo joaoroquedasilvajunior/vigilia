@@ -19,7 +19,7 @@ from io import TextIOWrapper
 
 import httpx
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db import AsyncSessionLocal
@@ -45,19 +45,76 @@ COLUMN_ALIASES = {
                        "NR_CPF_CNPJ_DOADOR_ORIGINARIO"],
     "donor_name":     ["NM_DOADOR", "NOME_DOADOR",
                        "NM_DOADOR_RFB", "NOME_DOADOR_RFB"],
-    "donor_sector":   ["DS_ECONOMICO_DOADOR", "DS_SETOR_ECONOMICO_DOADOR",
+    # CNAE — 2022 schema. Both code (CD_) and description (DS_) flavors.
+    "cnae_code":      ["CD_CNAE_DOADOR", "CD_CNAE_DOADOR_ORIGINARIO",
+                       "CD_CNAE_ATIVIDADE_PRINCIPAL"],
+    "cnae_desc":      ["DS_CNAE_DOADOR", "DS_CNAE_DOADOR_ORIGINARIO",
+                       "NM_CNAE_ATIVIDADE_PRINCIPAL",
+                       # legacy / unlikely fallbacks
+                       "DS_ECONOMICO_DOADOR", "DS_SETOR_ECONOMICO_DOADOR",
                        "SETOR_ECONOMICO_DOADOR"],
     "amount":         ["VR_RECEITA", "VALOR_RECEITA"],
     "source":         ["DS_FONTE_RECURSO", "FONTE_RECURSO"],
+    "origem":         ["DS_ORIGEM_RECURSO", "ORIGEM_RECURSO"],
+    "natureza":       ["DS_NATUREZA_RECEITA", "NATUREZA_RECEITA"],
+    "tipo_doador":    ["NM_TIPO_DOADOR", "DS_TIPO_DOADOR_ORIGINARIO"],
     "donation_type":  ["DS_ORIGEM_RECURSO", "ORIGEM_RECURSO",
                        "DS_NATUREZA_RECEITA"],
     "state_uf":       ["SG_UF", "SG_UE"],
 }
 
+# CNAE 2-digit prefix → our sector slug.
+# CNAE 2.0 reference: divisões da Classificação Nacional de Atividades Econômicas.
+CNAE2_SECTOR: dict[str, str] = {
+    "01": "agronegocio",         # Agricultura, pecuária e serviços
+    "02": "agronegocio",         # Produção florestal
+    "03": "agronegocio",         # Pesca e aquicultura
+    "05": "energia-mineracao",   # Extração de carvão
+    "06": "energia-mineracao",   # Extração de petróleo e gás
+    "07": "energia-mineracao",   # Extração de minerais metálicos
+    "08": "energia-mineracao",   # Extração de minerais não metálicos
+    "09": "energia-mineracao",   # Atividades de apoio à extração
+    "10": "agronegocio",         # Fabricação de produtos alimentícios
+    "11": "agronegocio",         # Fabricação de bebidas
+    "12": "agronegocio",         # Fabricação de produtos do fumo
+    "19": "energia-mineracao",   # Coque, derivados de petróleo
+    "20": "agronegocio",         # Produtos químicos (inclui agroquímicos)
+    "35": "energia-mineracao",   # Eletricidade, gás
+    "36": "energia-mineracao",   # Captação, tratamento de água
+    "37": "energia-mineracao",   # Esgoto
+    "38": "energia-mineracao",   # Coleta, tratamento de resíduos
+    "39": "energia-mineracao",   # Descontaminação
+    "41": "construtoras",        # Construção de edifícios
+    "42": "construtoras",        # Obras de infraestrutura
+    "43": "construtoras",        # Serviços especializados de construção
+    "58": "midia",               # Edição
+    "59": "midia",               # Atividades cinematográficas
+    "60": "midia",               # Rádio e televisão
+    "61": "midia",               # Telecomunicações
+    "62": "midia",               # Tecnologia da informação
+    "63": "midia",               # Serviços de informação
+    "64": "financeiro",          # Atividades de serviços financeiros
+    "65": "financeiro",          # Seguros e previdência
+    "66": "financeiro",          # Atividades auxiliares dos serviços financeiros
+    "85": "educacao",            # Educação
+    "86": "saude",               # Atividades de atenção à saúde humana
+    "87": "saude",               # Atendimento residencial saúde
+    "88": "saude",               # Serviços de assistência social sem alojamento
+}
+
+# Specific CNAE codes (4-digit class) that override 2-digit defaults.
+# 9491 = Atividades de organizações religiosas (the only reliable religious code).
+CNAE_CLASS_OVERRIDE: dict[str, str] = {
+    "9491": "religioso",
+}
+
 # Map TSE sector text → our slug. Order matters (first match wins).
 SECTOR_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"agric|pecu[áa]r|agro|silvicult|cana[- ]de[- ]a|frigor", re.I),
-     "agronegocio"),
+    (re.compile(
+        r"agric|pecu[áa]r|agro|silvicult|cana[- ]de[- ]a|frigor|"
+        r"cultivo|lavoura|criação|criacao|abate|laticín|laticin",
+        re.I,
+    ), "agronegocio"),
     (re.compile(r"financ|banc|seguro|investiment|cr[ée]dito", re.I),
      "financeiro"),
     (re.compile(r"constru[çc][ãa]o|engenharia civ|imobili[áa]r|incorpora", re.I),
@@ -83,12 +140,78 @@ def _hash_doc(doc: str) -> str | None:
     return hashlib.sha256(clean.encode()).hexdigest() if clean else None
 
 
-def _classify_sector(sector_text: str | None) -> str:
-    if not sector_text:
-        return "outros"
-    for pattern, slug in SECTOR_PATTERNS:
-        if pattern.search(sector_text):
-            return slug
+def _normalize_cnae(raw: str | None) -> str | None:
+    """Strip non-digits from a CNAE field, return None if no digits remain.
+
+    TSE files commonly use either '0111-0/01' (formatted) or 1110301 (numeric);
+    we want just the leading digits to do prefix matching.
+    """
+    if not raw:
+        return None
+    digits = re.sub(r"\D", "", str(raw))
+    return digits or None
+
+
+def _classify_by_cnae(cnae: str | None) -> str | None:
+    """
+    Map a CNAE code to a sector slug. Returns None when the code doesn't
+    match any known mapping (so the caller can fall through to text-pattern
+    or origem-receita logic).
+    """
+    digits = _normalize_cnae(cnae)
+    if not digits or len(digits) < 2:
+        return None
+    # 4-digit class override takes precedence (catches 9491 = religious)
+    if len(digits) >= 4 and digits[:4] in CNAE_CLASS_OVERRIDE:
+        return CNAE_CLASS_OVERRIDE[digits[:4]]
+    return CNAE2_SECTOR.get(digits[:2])
+
+
+_FUNDO_PUBLICO_RE = re.compile(
+    r"fundo\s+(especial|eleitoral|partid[áa]rio)",
+    re.IGNORECASE,
+)
+
+
+def _classify_sector(
+    sector_text: str | None,
+    cnae_code: str | None = None,
+    cnae_desc: str | None = None,
+    origem_recurso: str | None = None,
+    natureza: str | None = None,
+) -> str:
+    """
+    Multi-signal classifier (priority order):
+      1. DS_ORIGEM_RECURSO / DS_NATUREZA_RECEITA mentioning Fundo Especial /
+         Eleitoral / Partidário → 'fundo_publico'.
+      2. CNAE code prefix → sector via CNAE2_SECTOR map (with class override).
+      3. CNAE description text → SECTOR_PATTERNS regex (semantic fallback).
+      4. Legacy free-text sector field → SECTOR_PATTERNS.
+      5. 'outros' as last resort.
+    """
+    # 1. Public-fund signal — overrides any sector guess. The donor here is
+    # functionally the public treasury, not a private actor.
+    for src in (origem_recurso, natureza):
+        if src and _FUNDO_PUBLICO_RE.search(src):
+            return "fundo_publico"
+
+    # 2. CNAE code (most reliable when present)
+    by_code = _classify_by_cnae(cnae_code)
+    if by_code:
+        return by_code
+
+    # 3. CNAE description as text
+    if cnae_desc:
+        for pattern, slug in SECTOR_PATTERNS:
+            if pattern.search(cnae_desc):
+                return slug
+
+    # 4. Legacy free-text sector field (kept for backward compatibility)
+    if sector_text:
+        for pattern, slug in SECTOR_PATTERNS:
+            if pattern.search(sector_text):
+                return slug
+
     return "outros"
 
 
@@ -140,6 +263,7 @@ async def _flush_donors(donors_buf: dict[str, dict]) -> None:
             set_={
                 "name": stmt.excluded.name,
                 "entity_type": stmt.excluded.entity_type,
+                "sector_cnae": stmt.excluded.sector_cnae,
                 "sector_group": stmt.excluded.sector_group,
                 "state_uf": stmt.excluded.state_uf,
             },
@@ -267,8 +391,18 @@ async def _process_csv_stream(
                 continue
 
             donor_name = (row.get(cols.get("donor_name", ""), "") or "").strip()[:300] or "(sem nome)"
-            sector_text = row.get(cols.get("donor_sector", ""), "") if cols.get("donor_sector") else ""
-            sector_group = _classify_sector(sector_text)
+            cnae_code = row.get(cols.get("cnae_code", ""), "") if cols.get("cnae_code") else None
+            cnae_desc = row.get(cols.get("cnae_desc", ""), "") if cols.get("cnae_desc") else None
+            origem    = row.get(cols.get("origem", ""), "")    if cols.get("origem")    else None
+            natureza  = row.get(cols.get("natureza", ""), "")  if cols.get("natureza")  else None
+            sector_group = _classify_sector(
+                sector_text=cnae_desc,
+                cnae_code=cnae_code,
+                cnae_desc=cnae_desc,
+                origem_recurso=origem,
+                natureza=natureza,
+            )
+            sector_cnae = _normalize_cnae(cnae_code)
             entity_type = _entity_type_from_doc(donor_doc)
             state_uf = (row.get(cols.get("state_uf", ""), "") or "").strip()[:2] or None
 
@@ -280,6 +414,7 @@ async def _process_csv_stream(
                     "cnpj_cpf_hash": donor_hash,
                     "name": donor_name,
                     "entity_type": entity_type,
+                    "sector_cnae": sector_cnae,
                     "sector_group": sector_group,
                     "state_uf": state_uf,
                 }
@@ -430,3 +565,157 @@ if __name__ == "__main__":
         await sync_donors()
 
     asyncio.run(_main())
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Reclassify-only pipeline — refresh sector_cnae + sector_group on existing
+# donor rows without touching donor_links or legislator references.
+# ────────────────────────────────────────────────────────────────────────────
+async def reclassify_donors(zip_url: str = DEFAULT_TSE_URL) -> None:
+    """
+    Walk the TSE 2022 receitas CSVs again, but only build a
+      cnpj_cpf_hash → (cnae_code, sector_group)
+    mapping and UPDATE donors.sector_cnae / donors.sector_group.
+
+    This is the fix for the original ingest bug, where COLUMN_ALIASES
+    didn't match the real TSE column names so every donor landed at
+    sector_group='outros'. Now we use the correct CD_CNAE_DOADOR /
+    DS_CNAE_DOADOR columns plus the multi-signal _classify_sector
+    helper. donor_links is untouched — only the classification fields
+    on existing donor rows change.
+
+    Idempotent: running again with the same TSE data produces the
+    same final state.
+    """
+    logger.info("reclassify_donors: starting download from %s", zip_url)
+
+    # Build the in-memory map first; one source of truth for resolution.
+    # Per-donor: prefer the CNAE classification when available; otherwise
+    # take whatever signal we have (origem/natureza/text).
+    classification: dict[str, tuple[str | None, str]] = {}  # hash -> (cnae_digits, sector_group)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        zip_path = os.path.join(tmpdir, "tse.zip")
+        async with httpx.AsyncClient(timeout=600.0, follow_redirects=True) as client:
+            async with client.stream("GET", zip_url) as resp:
+                resp.raise_for_status()
+                bytes_done = 0
+                with open(zip_path, "wb") as f:
+                    async for chunk in resp.aiter_bytes(chunk_size=1 << 20):
+                        f.write(chunk)
+                        bytes_done += len(chunk)
+                logger.info(
+                    "reclassify_donors: download complete (%.1f MB)",
+                    bytes_done / (1024 * 1024),
+                )
+
+        with zipfile.ZipFile(zip_path) as zf:
+            members = [
+                m for m in zf.namelist()
+                if re.match(r"receitas_candidatos_2022.*\.csv", m, re.I)
+            ]
+            logger.info("reclassify_donors: %d receitas CSVs in zip", len(members))
+
+            for member in members:
+                # Resolve columns from header
+                with zf.open(member) as raw:
+                    text = TextIOWrapper(raw, encoding="latin-1", newline="")
+                    first_line = text.readline()
+                    header = [h.strip().strip('"') for h in first_line.split(";")]
+                    cols = _resolve_columns(header)
+                missing = [k for k in ("cargo", "donor_doc") if k not in cols]
+                if missing:
+                    logger.warning(
+                        "reclassify_donors: %s missing cols %s — skip",
+                        member, missing,
+                    )
+                    continue
+
+                logger.info(
+                    "reclassify_donors: %s — cols resolved: cnae_code=%s cnae_desc=%s origem=%s",
+                    member,
+                    cols.get("cnae_code"),
+                    cols.get("cnae_desc"),
+                    cols.get("origem"),
+                )
+
+                # Stream-process all rows from this CSV
+                with zf.open(member) as raw2:
+                    text2 = TextIOWrapper(raw2, encoding="latin-1", newline="")
+                    reader = pd.read_csv(
+                        text2,
+                        sep=";",
+                        encoding="latin-1",
+                        chunksize=20_000,
+                        low_memory=False,
+                        on_bad_lines="skip",
+                        dtype=str,
+                    )
+                    for chunk in reader:
+                        cargo_col = cols.get("cargo")
+                        if cargo_col and cargo_col in chunk.columns:
+                            chunk = chunk[
+                                chunk[cargo_col].str.upper().str.strip() == CARGO_TARGET
+                            ]
+                        if chunk.empty:
+                            continue
+                        for _, row in chunk.iterrows():
+                            donor_doc = row.get(cols.get("donor_doc", ""), "")
+                            donor_hash = _hash_doc(donor_doc)
+                            if not donor_hash:
+                                continue
+                            cnae_code = row.get(cols.get("cnae_code", ""), "") if cols.get("cnae_code") else None
+                            cnae_desc = row.get(cols.get("cnae_desc", ""), "") if cols.get("cnae_desc") else None
+                            origem    = row.get(cols.get("origem",    ""), "") if cols.get("origem")    else None
+                            natureza  = row.get(cols.get("natureza",  ""), "") if cols.get("natureza")  else None
+                            sector_group = _classify_sector(
+                                sector_text=cnae_desc,
+                                cnae_code=cnae_code,
+                                cnae_desc=cnae_desc,
+                                origem_recurso=origem,
+                                natureza=natureza,
+                            )
+                            cnae_digits = _normalize_cnae(cnae_code)
+                            # Prefer rows that produced a non-'outros' classification
+                            existing = classification.get(donor_hash)
+                            if existing is None or (
+                                existing[1] == "outros" and sector_group != "outros"
+                            ):
+                                classification[donor_hash] = (cnae_digits, sector_group)
+
+    logger.info(
+        "reclassify_donors: classification map built, %d unique donors with TSE data",
+        len(classification),
+    )
+
+    # Bulk-apply via UPDATE FROM VALUES, in chunks to keep statements bounded.
+    CHUNK = 1000
+    items = list(classification.items())
+    updated = 0
+    async with AsyncSessionLocal() as db:
+        for i in range(0, len(items), CHUNK):
+            batch = items[i : i + CHUNK]
+            # Build a VALUES expression: (hash, cnae, sector)
+            values_sql = ", ".join(
+                f"(:h{i+j}, :c{i+j}, :s{i+j})" for j in range(len(batch))
+            )
+            params = {}
+            for j, (h, (cnae, sg)) in enumerate(batch):
+                params[f"h{i+j}"] = h
+                params[f"c{i+j}"] = cnae
+                params[f"s{i+j}"] = sg
+            sql = text(f"""
+                UPDATE donors d
+                SET sector_cnae = v.cnae,
+                    sector_group = v.sector
+                FROM (VALUES {values_sql}) AS v(hash, cnae, sector)
+                WHERE d.cnpj_cpf_hash = v.hash
+            """)
+            result = await db.execute(sql, params)
+            updated += result.rowcount or 0
+            await db.commit()
+
+    logger.info(
+        "reclassify_donors: COMPLETE — %d donor rows updated (of %d in TSE map)",
+        updated, len(classification),
+    )

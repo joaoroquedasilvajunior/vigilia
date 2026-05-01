@@ -19,7 +19,11 @@ from app.analysis.constitutional_scorer import run_constitutional_pipeline
 from app.analysis.party_discipline import compute_discipline_and_absence
 from app.ingestion.orientation_pipeline import sync_party_orientations
 from app.ingestion.tag_pipeline import tag_bills
-from app.ingestion.tse_pipeline import inspect_donors_csv, sync_donors
+from app.ingestion.tse_pipeline import (
+    inspect_donors_csv,
+    reclassify_donors,
+    sync_donors,
+)
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -110,6 +114,21 @@ async def trigger_compute_clusters(
     """Run k-means behavioral clustering on the legislator vote matrix."""
     background_tasks.add_task(compute_clusters)
     return {"status": "queued", "job": "compute_clusters"}
+
+
+@router.post("/donors/reclassify")
+async def trigger_reclassify_donors(
+    background_tasks: BackgroundTasks,
+    _: Annotated[None, Depends(_verify_secret)],
+):
+    """
+    Re-fetch TSE 2022 candidate accounts and refresh
+    donors.sector_cnae + donors.sector_group on existing rows
+    using the now-correct CNAE column resolution. donor_links
+    is untouched. Idempotent. ~5-10 min runtime.
+    """
+    background_tasks.add_task(reclassify_donors)
+    return {"status": "queued", "job": "reclassify_donors"}
 
 
 @router.post("/donors/inspect")
