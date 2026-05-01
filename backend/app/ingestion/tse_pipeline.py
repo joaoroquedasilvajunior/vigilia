@@ -169,14 +169,30 @@ CNAE_CLASS_OVERRIDE: dict[str, str] = {
 # construction, financial, and agro last (broadest patterns can produce false
 # positives on individual names).
 NAME_PATTERNS: list[tuple[re.Pattern, str]] = [
+    # ── Campaign committees / inter-candidate transfers ──
+    # These dominate the "pessoa_juridica" rows because politicians have
+    # campaign CNPJs. They aren't a corporate sector — flagging them
+    # explicitly stops them showing up as "outros".
+    (re.compile(
+        r"\belei[çc][ãa]o\s+2022\b|\belei[çc][õo]es\s+2022\b|"
+        r"\bcomit[êe]\s+(?:financeiro|de\s+campanha)\b|"
+        r"deputad[oa]\s+(?:federal|estadual)|"
+        r"\bsenador[a]?\b|\bgovernador[a]?\b|"
+        r"\bvereador[a]?\b",
+        re.I,
+    ), "campanha"),
+
     # ── Religious institutions ──
+    # NOTE: \bbatista\b removed from this list — common Brazilian surname.
+    # We only run NAME_PATTERNS against pessoa_juridica donors anyway, but
+    # being defensive in case CNPJ entities adopt clergy-style trade names.
     (re.compile(
         r"\bigreja\b|assembleia\s+de\s+deus|deus\s+[ée]\s+amor|"
-        r"universal\s+do\s+reino|sara\s+nossa\s+terra|adventista|"
-        r"\bbatista\b|cat[óo]lica|\bdiocese\b|par[óo]quia|"
+        r"universal\s+do\s+reino|sara\s+nossa\s+terra|"
+        r"\bdiocese\b|par[óo]quia|"
         r"associa[çc][ãa]o\s+religiosa|entidade\s+religiosa|"
-        r"templo|miss[ãa]o\s+evang[ée]lica|minist[ée]rio\s+pentecostal|"
-        r"comunidade\s+evang[ée]lica",
+        r"\btemplo\s+\w|miss[ãa]o\s+evang[ée]lica|"
+        r"minist[ée]rio\s+pentecostal|comunidade\s+evang[ée]lica",
         re.I,
     ), "religioso"),
 
@@ -219,17 +235,23 @@ NAME_PATTERNS: list[tuple[re.Pattern, str]] = [
     ), "financeiro"),
 
     # ── Agro & food ──
+    # Restricted to high-confidence company markers. Bare-word brand names
+    # (Suzano, Seara, Eldorado, Bracell) removed — they collide with common
+    # Brazilian surnames. Even though we filter to pessoa_juridica, those
+    # tokens still hit campaign-committee names like "ELEIÇÃO 2022 SUZANO".
     (re.compile(
-        r"\bjbs\b|\bmarfrig\b|\bbrf\b|\bcargill\b|"
-        r"\bbunge\b|\bamaggi\b|slc\s+agr[íi]cola|\btereos\b|"
-        r"jalles\s+machado|\bra[íi]zen\b|\bsuzano\b|\bfibria\b|"
-        r"\bbracell\b|\beldorado\b|\bfriboi\b|\bseara\b|"
+        r"\bjbs\s+(?:s\.?\s*a|foods)|"
+        r"\bmarfrig\b|\bbrf\s+s\.?\s*a|"
+        r"\bcargill\b|\bbunge\b|\bamaggi\b|"
+        r"slc\s+agr[íi]cola|\btereos\b|jalles\s+machado|"
+        r"\bra[íi]zen\b|\bfibria\s+celulose|"
+        r"\bfriboi\s+s\.?\s*a|"
         r"cooperativa\s+(?:agr[íi]cola|de\s+(?:produtores|cafeicultores))|"
-        r"frigor[íi]fico|"
-        r"agropecu[áa]ria|agroind[úu]stria|"
-        r"\bfazenda\b|"
+        r"\bfrigor[íi]fico\s+\w|"
+        r"\bagropecu[áa]ria\s+\w|\bagroind[úu]stria\s+\w|"
+        r"\bagro[\s-]*ind[úu]stria|"
         r"a[çc][úu]car\s+e\s+[áa]lcool|usina\s+de\s+a[çc][úu]car|"
-        r"silvicultura|laticín|laticin",
+        r"laticín|laticin",
         re.I,
     ), "agronegocio"),
 ]
@@ -250,25 +272,46 @@ def _classify_by_name(name: str | None) -> str | None:
 
 async def reclassify_donors_by_name() -> dict:
     """
-    Pattern-match every donor name against NAME_PATTERNS. Update
-    donors.sector_group only when (a) the name matches a pattern AND
-    (b) the donor is currently NULL or 'outros'. Idempotent.
+    Pattern-match donor names against NAME_PATTERNS, but ONLY for
+    entity_type = 'pessoa_juridica'. Individual donors (CPF) are
+    classified by personal name patterns that collide with common
+    Brazilian surnames (Batista, Suzano, Seara), so we exclude them
+    entirely.
 
-    Returns counts per resulting sector for the spec's verification SQL.
+    Idempotent. First step rolls back any prior false-positive
+    classification on individual donors.
     """
-    logger.info("reclassify_donors_by_name: starting")
+    logger.info("reclassify_donors_by_name: starting (PJ-only)")
 
-    # Read all donors that need a sector
+    # Roll back prior false positives: individuals were never supposed to
+    # be classified by company-name patterns. Set them back to 'outros'
+    # for any non-empty sector_group that's not the literal 'outros'.
+    async with AsyncSessionLocal() as db:
+        rollback = await db.execute(text("""
+            UPDATE donors
+            SET sector_group = 'outros'
+            WHERE entity_type = 'pessoa_fisica'
+              AND sector_group IS NOT NULL
+              AND sector_group <> 'outros'
+        """))
+        await db.commit()
+        logger.info(
+            "reclassify_donors_by_name: rolled back %d PF false positives",
+            rollback.rowcount or 0,
+        )
+
+    # Read PJ donors that need a sector
     async with AsyncSessionLocal() as db:
         result = await db.execute(text("""
             SELECT id, name
             FROM donors
-            WHERE sector_group IS NULL OR sector_group = 'outros'
+            WHERE entity_type = 'pessoa_juridica'
+              AND (sector_group IS NULL OR sector_group = 'outros')
         """))
         rows = result.all()
 
     logger.info(
-        "reclassify_donors_by_name: %d donors with NULL/outros to consider",
+        "reclassify_donors_by_name: %d PJ donors with NULL/outros to consider",
         len(rows),
     )
 
