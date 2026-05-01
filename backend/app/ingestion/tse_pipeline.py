@@ -980,6 +980,9 @@ BRASILAPI_CNPJ_BASE = "https://brasilapi.com.br/api/cnpj/v1"
 
 
 # Spec-aligned 2-digit CNAE prefix map (sector_group slugs from user spec).
+# CNAE 94 is intentionally NOT here — division 94 contains both 9491
+# (religious orgs) and 9492 (political parties), which are very different
+# civic-data buckets. We use the 4-digit override below to disambiguate.
 _BRASILAPI_CNAE2: dict[str, str] = {
     "01": "agronegocio", "02": "agronegocio", "03": "agronegocio",
     "10": "agronegocio", "11": "agronegocio", "12": "agronegocio",
@@ -994,33 +997,55 @@ _BRASILAPI_CNAE2: dict[str, str] = {
     "60": "midia_tecnologia", "61": "midia_tecnologia",
     "62": "midia_tecnologia", "63": "midia_tecnologia",
     "64": "financeiro", "65": "financeiro", "66": "financeiro",
-    "94": "religioso",
+}
+
+# 4-digit class overrides — handle CNAE divisions where the 2-digit prefix
+# is too coarse. Critical for division 94 where religious orgs (9491) and
+# political parties (9492) share the prefix but are very different actors.
+_BRASILAPI_CNAE4: dict[str, str] = {
+    "9491": "religioso",  # Atividades de organizações religiosas
+    "9492": "partido",    # Atividades de organizações políticas (campaign CNPJs)
+    # 9493/9499 (other associations) intentionally fall through to outros.
 }
 
 # Description-text fallback when 2-digit prefix lands outside the map.
+# Tighter regex than the donor-name patterns: we require word-boundaries
+# and full-word matches because CNAE descriptions often use exclusion
+# clauses like "exceto imobiliári[os]" that produced false positives in
+# the first BrasilAPI run.
 _BRASILAPI_DESC_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"agro|rural|cana|soja|pecu[áa]r|frigor|laticín|laticin", re.I),
-     "agronegocio"),
-    (re.compile(r"\bbanco\b|financ|seguro|cr[ée]dito|investiment", re.I),
+    (re.compile(
+        r"\bagro|\brural\b|cana[- ]de[- ]a|\bsoja\b|pecu[áa]r|frigor|laticín|laticin",
+        re.I,
+    ), "agronegocio"),
+    (re.compile(r"\bbanco\b|\bfinanceir|seguro|cr[ée]dito|investiment", re.I),
      "financeiro"),
-    (re.compile(r"constru|incorpor|imobili", re.I),
+    (re.compile(r"\bconstru[çc][ãa]o\b|\bconstrutora\b|\bincorporadora\b", re.I),
      "construtoras"),
-    (re.compile(r"\bigreja\b|religios|diocese|par[óo]quia|templo", re.I),
+    (re.compile(r"\bigreja\b|\breligios|diocese|par[óo]quia|\btemplo\b", re.I),
      "religioso"),
-    (re.compile(r"minera|petr[óo]le|extra[çc][ãa]o", re.I),
+    (re.compile(r"minera[çc]|petr[óo]le", re.I),
      "mineracao"),
 ]
 
 
 def classify_cnae_brasilapi(code: str | None, description: str | None) -> str:
     """
-    BrasilAPI-shaped CNAE classifier per the user's enrichment spec.
-    `code` is the 7-digit numeric (e.g. '1011201' for JBS), `description`
-    is `cnae_fiscal_descricao`. 2-digit prefix takes priority; description
-    text is a fallback when the prefix isn't in the map.
+    BrasilAPI-shaped CNAE classifier. `code` is the 7-digit numeric
+    (e.g. '1011201' for JBS), `description` is `cnae_fiscal_descricao`.
+
+    Priority:
+      1. 4-digit class override (catches 9491 = religioso, 9492 = partido).
+      2. 2-digit division prefix.
+      3. Description text fallback (word-boundary matched).
+      4. 'outros'.
     """
     if code:
         digits = re.sub(r"\D", "", str(code))
+        if len(digits) >= 4:
+            override = _BRASILAPI_CNAE4.get(digits[:4])
+            if override:
+                return override
         if len(digits) >= 2:
             mapped = _BRASILAPI_CNAE2.get(digits[:2])
             if mapped:
