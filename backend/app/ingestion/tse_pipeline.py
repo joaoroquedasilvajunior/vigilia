@@ -63,6 +63,61 @@ COLUMN_ALIASES = {
     "state_uf":       ["SG_UF", "SG_UE"],
 }
 
+# Browser-ish headers — TSE's CDN occasionally returns 403 Forbidden for
+# default httpx UAs but lets through realistic browser fingerprints. Even
+# when the 403 is IP-based rather than UA-based, the retry-with-delay below
+# often succeeds because the block tends to be a sliding-window rate limit.
+_TSE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/127.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/zip,application/octet-stream,*/*",
+    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+}
+
+
+async def _stream_tse_zip(url: str, dest_path: str) -> int:
+    """
+    Download a TSE bulk zip to dest_path with browser-like headers + a
+    light retry-on-403 strategy. Returns the number of bytes written.
+
+    Raises httpx.HTTPStatusError on a non-recoverable failure.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            async with httpx.AsyncClient(
+                timeout=600.0,
+                follow_redirects=True,
+                headers=_TSE_HEADERS,
+            ) as client:
+                async with client.stream("GET", url) as resp:
+                    resp.raise_for_status()
+                    bytes_done = 0
+                    with open(dest_path, "wb") as f:
+                        async for chunk in resp.aiter_bytes(chunk_size=1 << 20):
+                            f.write(chunk)
+                            bytes_done += len(chunk)
+                    return bytes_done
+        except httpx.HTTPStatusError as exc:
+            last_exc = exc
+            status = exc.response.status_code
+            if status in (403, 429, 503):
+                wait = 30 * attempt  # 30s, 60s, 90s
+                logger.warning(
+                    "TSE download attempt %d hit %d; sleeping %ds before retry",
+                    attempt, status, wait,
+                )
+                await asyncio.sleep(wait)
+                continue
+            raise
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("TSE download failed after retries with no recorded exception")
+
+
 # CNAE 2-digit prefix → our sector slug.
 # CNAE 2.0 reference: divisões da Classificação Nacional de Atividades Econômicas.
 CNAE2_SECTOR: dict[str, str] = {
@@ -451,12 +506,7 @@ async def inspect_donors_csv(zip_url: str = DEFAULT_TSE_URL) -> None:
     logger.info("inspect_donors_csv: downloading %s", zip_url)
     with tempfile.TemporaryDirectory() as tmpdir:
         zip_path = os.path.join(tmpdir, "tse.zip")
-        async with httpx.AsyncClient(timeout=600.0, follow_redirects=True) as client:
-            async with client.stream("GET", zip_url) as resp:
-                resp.raise_for_status()
-                with open(zip_path, "wb") as f:
-                    async for chunk in resp.aiter_bytes(chunk_size=1 << 20):
-                        f.write(chunk)
+        await _stream_tse_zip(zip_url, zip_path)
         logger.info("inspect_donors_csv: download done (%d bytes)", os.path.getsize(zip_path))
 
         with zipfile.ZipFile(zip_path) as zf:
@@ -504,19 +554,11 @@ async def sync_donors(zip_url: str = DEFAULT_TSE_URL) -> None:
         zip_path = os.path.join(tmpdir, "tse.zip")
 
         # Stream download to disk to keep memory bounded
-        async with httpx.AsyncClient(timeout=600.0, follow_redirects=True) as client:
-            async with client.stream("GET", zip_url) as resp:
-                resp.raise_for_status()
-                bytes_total = int(resp.headers.get("content-length", 0))
-                bytes_done = 0
-                with open(zip_path, "wb") as f:
-                    async for chunk in resp.aiter_bytes(chunk_size=1 << 20):  # 1 MB
-                        f.write(chunk)
-                        bytes_done += len(chunk)
-                logger.info(
-                    "sync_donors: download complete (%.1f MB)",
-                    bytes_done / (1024 * 1024),
-                )
+        bytes_done = await _stream_tse_zip(zip_url, zip_path)
+        logger.info(
+            "sync_donors: download complete (%.1f MB)",
+            bytes_done / (1024 * 1024),
+        )
 
         # Iterate CSVs of interest inside the zip without extracting all
         with zipfile.ZipFile(zip_path) as zf:
@@ -596,18 +638,11 @@ async def reclassify_donors(zip_url: str = DEFAULT_TSE_URL) -> None:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         zip_path = os.path.join(tmpdir, "tse.zip")
-        async with httpx.AsyncClient(timeout=600.0, follow_redirects=True) as client:
-            async with client.stream("GET", zip_url) as resp:
-                resp.raise_for_status()
-                bytes_done = 0
-                with open(zip_path, "wb") as f:
-                    async for chunk in resp.aiter_bytes(chunk_size=1 << 20):
-                        f.write(chunk)
-                        bytes_done += len(chunk)
-                logger.info(
-                    "reclassify_donors: download complete (%.1f MB)",
-                    bytes_done / (1024 * 1024),
-                )
+        bytes_done = await _stream_tse_zip(zip_url, zip_path)
+        logger.info(
+            "reclassify_donors: download complete (%.1f MB)",
+            bytes_done / (1024 * 1024),
+        )
 
         with zipfile.ZipFile(zip_path) as zf:
             members = [
