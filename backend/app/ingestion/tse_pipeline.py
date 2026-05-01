@@ -572,8 +572,8 @@ async def sync_donors(zip_url: str = DEFAULT_TSE_URL) -> None:
                 logger.info("sync_donors: processing %s", member)
                 with zf.open(member) as raw:
                     # Sniff header from first line for column resolution
-                    text = TextIOWrapper(raw, encoding="latin-1", newline="")
-                    first_line = text.readline()
+                    stream = TextIOWrapper(raw, encoding="latin-1", newline="")
+                    first_line = stream.readline()
                     header = [h.strip().strip('"') for h in first_line.split(";")]
                     cols = _resolve_columns(header)
                     missing = [k for k in ("cargo", "candidate_cpf", "donor_doc", "amount") if k not in cols]
@@ -586,7 +586,7 @@ async def sync_donors(zip_url: str = DEFAULT_TSE_URL) -> None:
 
                 # Re-open for actual parse (chunked) — pandas reads from start
                 with zf.open(member) as raw2:
-                    text2 = TextIOWrapper(raw2, encoding="latin-1", newline="")
+                    stream2 = TextIOWrapper(raw2, encoding="latin-1", newline="")
                     matched, seen = await _process_csv_stream(text2, cols, leg_lookup)
                     total_matched += matched
                     total_seen += seen
@@ -654,8 +654,8 @@ async def reclassify_donors(zip_url: str = DEFAULT_TSE_URL) -> None:
             for member in members:
                 # Resolve columns from header
                 with zf.open(member) as raw:
-                    text = TextIOWrapper(raw, encoding="latin-1", newline="")
-                    first_line = text.readline()
+                    stream = TextIOWrapper(raw, encoding="latin-1", newline="")
+                    first_line = stream.readline()
                     header = [h.strip().strip('"') for h in first_line.split(";")]
                     cols = _resolve_columns(header)
                 missing = [k for k in ("cargo", "donor_doc") if k not in cols]
@@ -676,9 +676,9 @@ async def reclassify_donors(zip_url: str = DEFAULT_TSE_URL) -> None:
 
                 # Stream-process all rows from this CSV
                 with zf.open(member) as raw2:
-                    text2 = TextIOWrapper(raw2, encoding="latin-1", newline="")
+                    stream2 = TextIOWrapper(raw2, encoding="latin-1", newline="")
                     reader = pd.read_csv(
-                        text2,
+                        stream2,
                         sep=";",
                         encoding="latin-1",
                         chunksize=20_000,
