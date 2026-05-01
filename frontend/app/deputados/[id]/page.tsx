@@ -459,12 +459,19 @@ export default async function DeputadoProfilePage({
       : null;
 
   const votes = votesData.items;
-  const voteBreakdown = {
-    sim: votes.filter((v) => v.vote_value === "sim").length,
-    não: votes.filter((v) => v.vote_value === "não").length,
-    abstencao: votes.filter((v) => v.vote_value === "abstencao").length,
-    ausente: votes.filter((v) => v.vote_value === "ausente").length,
-  };
+  // Vote breakdown uses full-population counts from the legislator detail
+  // endpoint, NOT the paginated list — the paginated counts only sum the
+  // 50 most-recent votes shown below. Five buckets so the cards add up
+  // to the total (obstrução is its own vote_value in TSE data, ~1% of
+  // votes; lumping it into ausente would mis-categorize it politically).
+  const voteBreakdown: Array<[string, number]> = [
+    ["sim",        legislator.votes_sim ?? 0],
+    ["não",        legislator.votes_nao ?? 0],
+    ["abstenção",  legislator.votes_abstencao ?? 0],
+    ["obstrução",  legislator.votes_obstrucao ?? 0],
+    ["ausente",    legislator.votes_ausente ?? 0],
+  ];
+  const totalVotes = legislator.votes_total ?? votesData.total;
 
   return (
     <main className="max-w-5xl mx-auto px-4 py-10">
@@ -558,10 +565,10 @@ export default async function DeputadoProfilePage({
         {/* Vote breakdown card */}
         <div className="rounded-lg border border-concreto-shadow bg-concreto p-6">
           <h2 className="font-display text-sm font-bold text-brasilia uppercase tracking-wider mb-5">
-            Votações recentes ({votesData.total} total)
+            Votações registradas ({totalVotes} total)
           </h2>
-          <div className="grid grid-cols-2 gap-3">
-            {Object.entries(voteBreakdown).map(([label, count]) => (
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 sm:gap-3">
+            {voteBreakdown.map(([label, count]) => (
               <div
                 key={label}
                 className="text-center p-3 bg-concreto-shadow rounded-lg"

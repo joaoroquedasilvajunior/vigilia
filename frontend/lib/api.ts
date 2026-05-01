@@ -22,6 +22,13 @@ export interface Legislator {
   const_alignment_score: number | null;
   party_discipline_score: number | null;
   absence_rate: number | null;
+  // Detail endpoint only — full-population vote summary
+  votes_sim?: number;
+  votes_nao?: number;
+  votes_abstencao?: number;
+  votes_ausente?: number;
+  votes_obstrucao?: number;
+  votes_total?: number;
 }
 
 export interface ClusterMemberPreview {

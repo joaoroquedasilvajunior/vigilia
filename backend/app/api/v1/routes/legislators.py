@@ -56,7 +56,30 @@ async def get_legislator(
     if not row:
         raise HTTPException(404, "Legislador não encontrado")
     legislator, party = row
-    return _serialize_legislator(legislator, party)
+
+    # Compute full-population vote summary so the frontend's breakdown
+    # cards reflect all votes, not just the paginated 50 currently
+    # rendered in the voting-history list.
+    vote_summary = (await db.execute(
+        select(
+            func.count().filter(Vote.vote_value == "sim").label("sim"),
+            func.count().filter(Vote.vote_value == "não").label("nao"),
+            func.count().filter(Vote.vote_value == "abstencao").label("abstencao"),
+            func.count().filter(Vote.vote_value == "ausente").label("ausente"),
+            func.count().filter(Vote.vote_value == "obstrucao").label("obstrucao"),
+            func.count().label("total"),
+        ).where(Vote.legislator_id == legislator_id)
+    )).one()
+
+    return _serialize_legislator(
+        legislator, party,
+        votes_sim=vote_summary.sim,
+        votes_nao=vote_summary.nao,
+        votes_abstencao=vote_summary.abstencao,
+        votes_ausente=vote_summary.ausente,
+        votes_obstrucao=vote_summary.obstrucao,
+        votes_total=vote_summary.total,
+    )
 
 
 @router.get("/{legislator_id}/votes")
@@ -289,8 +312,18 @@ async def get_legislator_donors(
     }
 
 
-def _serialize_legislator(l: Legislator, p: Party | None = None) -> dict:
-    return {
+def _serialize_legislator(
+    l: Legislator,
+    p: Party | None = None,
+    *,
+    votes_sim: int | None = None,
+    votes_nao: int | None = None,
+    votes_abstencao: int | None = None,
+    votes_ausente: int | None = None,
+    votes_obstrucao: int | None = None,
+    votes_total: int | None = None,
+) -> dict:
+    out = {
         "id": str(l.id),
         "camara_id": l.camara_id,
         "name": l.name,
@@ -304,3 +337,12 @@ def _serialize_legislator(l: Legislator, p: Party | None = None) -> dict:
         "party_discipline_score": l.party_discipline_score,
         "absence_rate": l.absence_rate,
     }
+    # Vote summary is detail-only; keep list-endpoint payload identical.
+    if votes_total is not None:
+        out["votes_sim"]       = votes_sim
+        out["votes_nao"]       = votes_nao
+        out["votes_abstencao"] = votes_abstencao
+        out["votes_ausente"]   = votes_ausente
+        out["votes_obstrucao"] = votes_obstrucao
+        out["votes_total"]     = votes_total
+    return out
