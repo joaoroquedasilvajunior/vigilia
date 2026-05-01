@@ -22,6 +22,7 @@ from app.ingestion.tag_pipeline import tag_bills
 from app.ingestion.tse_pipeline import (
     inspect_donors_csv,
     reclassify_donors,
+    reclassify_donors_by_name,
     sync_donors,
 )
 
@@ -122,13 +123,29 @@ async def trigger_reclassify_donors(
     _: Annotated[None, Depends(_verify_secret)],
 ):
     """
-    Re-fetch TSE 2022 candidate accounts and refresh
-    donors.sector_cnae + donors.sector_group on existing rows
-    using the now-correct CNAE column resolution. donor_links
-    is untouched. Idempotent. ~5-10 min runtime.
+    Pattern-match donor names against known company / institution
+    patterns and update donors.sector_group accordingly. Only touches
+    rows where sector_group is currently NULL or 'outros'. donor_links
+    untouched. Idempotent. ~10-30 s runtime — pure name matching, no
+    network fetches.
+
+    NOTE: this replaces the original TSE-fetching reclassify path
+    because TSE's CDN persistently 403s from Railway. The CNAE-based
+    reclassify_donors function is preserved in tse_pipeline.py for
+    when network access is restored.
     """
+    background_tasks.add_task(reclassify_donors_by_name)
+    return {"status": "queued", "job": "reclassify_donors_by_name"}
+
+
+@router.post("/donors/reclassify-tse")
+async def trigger_reclassify_donors_tse(
+    background_tasks: BackgroundTasks,
+    _: Annotated[None, Depends(_verify_secret)],
+):
+    """Original CNAE-based reclassify (re-fetches TSE). Currently 403s."""
     background_tasks.add_task(reclassify_donors)
-    return {"status": "queued", "job": "reclassify_donors"}
+    return {"status": "queued", "job": "reclassify_donors_tse"}
 
 
 @router.post("/donors/inspect")

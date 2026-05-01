@@ -163,6 +163,156 @@ CNAE_CLASS_OVERRIDE: dict[str, str] = {
     "9491": "religioso",
 }
 
+# ── Name-based classifier ────────────────────────────────────────────────────
+# Used when CNAE data isn't available (e.g. when TSE re-fetch is blocked).
+# Order matters: religious + arms + media first (very specific names), then
+# construction, financial, and agro last (broadest patterns can produce false
+# positives on individual names).
+NAME_PATTERNS: list[tuple[re.Pattern, str]] = [
+    # ── Religious institutions ──
+    (re.compile(
+        r"\bigreja\b|assembleia\s+de\s+deus|deus\s+[ée]\s+amor|"
+        r"universal\s+do\s+reino|sara\s+nossa\s+terra|adventista|"
+        r"\bbatista\b|cat[óo]lica|\bdiocese\b|par[óo]quia|"
+        r"associa[çc][ãa]o\s+religiosa|entidade\s+religiosa|"
+        r"templo|miss[ãa]o\s+evang[ée]lica|minist[ée]rio\s+pentecostal|"
+        r"comunidade\s+evang[ée]lica",
+        re.I,
+    ), "religioso"),
+
+    # ── Arms / private security ──
+    (re.compile(
+        r"\btaurus\b|forjas\s+taurus|\bglock\b|"
+        r"\barmamento\b|muni[çc][ãa]o|"
+        r"seguran[çc]a\s+privada|servi[çc]os\s+de\s+vigil[âa]ncia",
+        re.I,
+    ), "armas"),
+
+    # ── Media ──
+    (re.compile(
+        r"\b(?:rede\s+)?globo\b|\brecord\s+tv\b|\brecord\s+broadcast|"
+        r"\bsbt\b|\bband\b|jovem\s+pan|cnn\s+brasil|"
+        r"\bcomunica[çc][õo]es\b|\bbroadcasting\b|"
+        r"\br[áa]dio\s+\w|televis[ãa]o\s+\w|\bjornal\s+\w|\beditora\b",
+        re.I,
+    ), "midia"),
+
+    # ── Construction / real estate ──
+    (re.compile(
+        r"\bmrv\b|\bcyrela\b|\bgafisa\b|\beven\b|\btecnisa\b|"
+        r"\beztec\b|\btenda\s+constru|\bdirecional\s+enge|\bcury\s+constru|"
+        r"\blavvi\b|moura\s+dubeux|"
+        r"\bconstrutora\b|\bincorporadora\b|engenharia\s+civil|"
+        r"imobili[áa]ria|"
+        r"pavimenta[çc][ãa]o|saneamento\s+b[áa]sico",
+        re.I,
+    ), "construtoras"),
+
+    # ── Financial / banking / fintech / rentals ──
+    (re.compile(
+        r"\bita[úu]\b|\bbradesco\b|\bsantander\b|\bbtg\b|"
+        r"\bbanco\s+\w|\bcaixa\s+econ[ôo]mica\b|"
+        r"financeira|corretora|seguradora|previd[êe]ncia\s+complementar|"
+        r"\basset\b|investimento|"
+        r"\blocaliza\b|\bmovida\b|\bunidas\b",
+        re.I,
+    ), "financeiro"),
+
+    # ── Agro & food ──
+    (re.compile(
+        r"\bjbs\b|\bmarfrig\b|\bbrf\b|\bcargill\b|"
+        r"\bbunge\b|\bamaggi\b|slc\s+agr[íi]cola|\btereos\b|"
+        r"jalles\s+machado|\bra[íi]zen\b|\bsuzano\b|\bfibria\b|"
+        r"\bbracell\b|\beldorado\b|\bfriboi\b|\bseara\b|"
+        r"cooperativa\s+(?:agr[íi]cola|de\s+(?:produtores|cafeicultores))|"
+        r"frigor[íi]fico|"
+        r"agropecu[áa]ria|agroind[úu]stria|"
+        r"\bfazenda\b|"
+        r"a[çc][úu]car\s+e\s+[áa]lcool|usina\s+de\s+a[çc][úu]car|"
+        r"silvicultura|laticín|laticin",
+        re.I,
+    ), "agronegocio"),
+]
+
+
+def _classify_by_name(name: str | None) -> str | None:
+    """
+    Return a sector slug for the donor name, or None when nothing matches.
+    Caller decides whether to keep the existing classification or overwrite.
+    """
+    if not name:
+        return None
+    for pattern, slug in NAME_PATTERNS:
+        if pattern.search(name):
+            return slug
+    return None
+
+
+async def reclassify_donors_by_name() -> dict:
+    """
+    Pattern-match every donor name against NAME_PATTERNS. Update
+    donors.sector_group only when (a) the name matches a pattern AND
+    (b) the donor is currently NULL or 'outros'. Idempotent.
+
+    Returns counts per resulting sector for the spec's verification SQL.
+    """
+    logger.info("reclassify_donors_by_name: starting")
+
+    # Read all donors that need a sector
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(text("""
+            SELECT id, name
+            FROM donors
+            WHERE sector_group IS NULL OR sector_group = 'outros'
+        """))
+        rows = result.all()
+
+    logger.info(
+        "reclassify_donors_by_name: %d donors with NULL/outros to consider",
+        len(rows),
+    )
+
+    # Compute updates in memory; only build rows where a pattern matched
+    updates: list[tuple[str, str]] = []  # (donor_id, sector_group)
+    for r in rows:
+        sector = _classify_by_name(r.name)
+        if sector:
+            updates.append((str(r.id), sector))
+
+    logger.info(
+        "reclassify_donors_by_name: %d donors matched a name pattern",
+        len(updates),
+    )
+
+    # Apply via VALUES batches of 1000
+    CHUNK = 1000
+    applied = 0
+    async with AsyncSessionLocal() as db:
+        for i in range(0, len(updates), CHUNK):
+            batch = updates[i : i + CHUNK]
+            values_sql = ", ".join(
+                f"(:i{i+j}, :s{i+j})" for j in range(len(batch))
+            )
+            params: dict = {}
+            for j, (did, sec) in enumerate(batch):
+                params[f"i{i+j}"] = did
+                params[f"s{i+j}"] = sec
+            sql = text(f"""
+                UPDATE donors d
+                SET sector_group = v.sector
+                FROM (VALUES {values_sql}) AS v(id, sector)
+                WHERE d.id = v.id::uuid
+            """)
+            res = await db.execute(sql, params)
+            applied += res.rowcount or 0
+            await db.commit()
+
+    logger.info(
+        "reclassify_donors_by_name: COMPLETE — %d donors reclassified",
+        applied,
+    )
+    return {"reclassified": applied, "considered": len(rows)}
+
 # Map TSE sector text → our slug. Order matters (first match wins).
 SECTOR_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(
