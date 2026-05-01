@@ -947,3 +947,270 @@ async def reclassify_donors(zip_url: str = DEFAULT_TSE_URL) -> None:
         "reclassify_donors: COMPLETE — %d donor rows updated (of %d in TSE map)",
         updated, len(classification),
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# BrasilAPI-driven CNPJ enrichment
+# ────────────────────────────────────────────────────────────────────────────
+#
+# Why a separate path: the existing CNAE2_SECTOR (inline TSE classifier)
+# uses our long-standing slugs ('energia-mineracao', 'midia'). The user's
+# enrichment spec asks for finer-grained slugs covering buckets we never
+# had ('comercio', 'logistica', 'midia_tecnologia', 'mineracao'). We add
+# them here without disturbing the inline-pipeline classifier.
+
+BRASILAPI_CNPJ_BASE = "https://brasilapi.com.br/api/cnpj/v1"
+
+
+# Spec-aligned 2-digit CNAE prefix map (sector_group slugs from user spec).
+_BRASILAPI_CNAE2: dict[str, str] = {
+    "01": "agronegocio", "02": "agronegocio", "03": "agronegocio",
+    "10": "agronegocio", "11": "agronegocio", "12": "agronegocio",
+    "16": "agronegocio", "17": "agronegocio", "21": "agronegocio",
+    "19": "agronegocio",
+    "05": "mineracao", "06": "mineracao", "07": "mineracao",
+    "08": "mineracao", "09": "mineracao",
+    "41": "construtoras", "42": "construtoras", "43": "construtoras",
+    "45": "comercio", "46": "comercio", "47": "comercio",
+    "49": "logistica", "50": "logistica", "51": "logistica",
+    "52": "logistica", "53": "logistica",
+    "60": "midia_tecnologia", "61": "midia_tecnologia",
+    "62": "midia_tecnologia", "63": "midia_tecnologia",
+    "64": "financeiro", "65": "financeiro", "66": "financeiro",
+    "94": "religioso",
+}
+
+# Description-text fallback when 2-digit prefix lands outside the map.
+_BRASILAPI_DESC_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"agro|rural|cana|soja|pecu[áa]r|frigor|laticín|laticin", re.I),
+     "agronegocio"),
+    (re.compile(r"\bbanco\b|financ|seguro|cr[ée]dito|investiment", re.I),
+     "financeiro"),
+    (re.compile(r"constru|incorpor|imobili", re.I),
+     "construtoras"),
+    (re.compile(r"\bigreja\b|religios|diocese|par[óo]quia|templo", re.I),
+     "religioso"),
+    (re.compile(r"minera|petr[óo]le|extra[çc][ãa]o", re.I),
+     "mineracao"),
+]
+
+
+def classify_cnae_brasilapi(code: str | None, description: str | None) -> str:
+    """
+    BrasilAPI-shaped CNAE classifier per the user's enrichment spec.
+    `code` is the 7-digit numeric (e.g. '1011201' for JBS), `description`
+    is `cnae_fiscal_descricao`. 2-digit prefix takes priority; description
+    text is a fallback when the prefix isn't in the map.
+    """
+    if code:
+        digits = re.sub(r"\D", "", str(code))
+        if len(digits) >= 2:
+            mapped = _BRASILAPI_CNAE2.get(digits[:2])
+            if mapped:
+                return mapped
+    if description:
+        for pattern, slug in _BRASILAPI_DESC_PATTERNS:
+            if pattern.search(description):
+                return slug
+    return "outros"
+
+
+async def lookup_cnpj_sector(
+    cnpj: str,
+    client: httpx.AsyncClient,
+    cache: dict[str, str],
+) -> str:
+    """
+    Query BrasilAPI for a CNPJ's CNAE and return our sector_group slug.
+    Cached in `cache` (caller provides; per-pipeline-run scope) so repeat
+    CNPJs don't hit the API twice.
+
+    Returns 'outros' on any failure (404, 5xx, network, malformed payload).
+    Caller is responsible for rate-limiting between calls.
+    """
+    clean = re.sub(r"\D", "", str(cnpj))
+    if len(clean) != 14:
+        return "outros"
+    if clean in cache:
+        return cache[clean]
+    try:
+        resp = await client.get(f"{BRASILAPI_CNPJ_BASE}/{clean}", timeout=10.0)
+        if resp.status_code != 200:
+            cache[clean] = "outros"
+            return "outros"
+        data = resp.json()
+        sector = classify_cnae_brasilapi(
+            data.get("cnae_fiscal"),
+            data.get("cnae_fiscal_descricao"),
+        )
+        cache[clean] = sector
+        return sector
+    except Exception as exc:
+        logger.debug("lookup_cnpj_sector: %s for %s", exc, clean[:6] + "…")
+        cache[clean] = "outros"
+        return "outros"
+
+
+async def enrich_donors_cnpj(
+    zip_url: str = DEFAULT_TSE_URL,
+    rate_sleep: float = 1.0,
+) -> dict:
+    """
+    Enrich corporate donors (entity_type='pessoa_juridica') currently
+    classified 'outros' by:
+
+      1. Loading their cnpj_cpf_hash values from the DB into a set.
+      2. Re-downloading the TSE 2022 receitas zip — the only source where
+         raw CNPJs (pre-hash) are available.
+      3. Walking each receitas CSV; for every PJ row whose hashed CNPJ
+         is in our target set, calling BrasilAPI for the raw CNPJ and
+         storing the resulting sector_group.
+      4. Bulk-updating donors.sector_group via VALUES batches.
+
+    Rate-limited at `rate_sleep` seconds between BrasilAPI calls.
+    Cached so duplicate CNPJs in TSE don't re-hit the API.
+
+    Returns {"considered": N, "looked_up": M, "enriched": K}.
+
+    Idempotent: re-running enriches anything still 'outros' that gained
+    a CNPJ match. Already-enriched rows are skipped because we filter on
+    sector_group = 'outros' in step 1.
+    """
+    logger.info("enrich_donors_cnpj: starting")
+
+    # Step 1: which donors do we want to enrich?
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(text("""
+            SELECT cnpj_cpf_hash
+            FROM donors
+            WHERE entity_type = 'pessoa_juridica'
+              AND (sector_group IS NULL OR sector_group = 'outros')
+              AND UPPER(name) NOT LIKE '%DIREÇÃO%'
+              AND UPPER(name) NOT LIKE '%DIRECAO%'
+              AND UPPER(name) NOT LIKE 'ELEI%'
+        """))).all()
+    target_hashes = {r.cnpj_cpf_hash for r in rows if r.cnpj_cpf_hash}
+    logger.info(
+        "enrich_donors_cnpj: %d PJ donors to enrich (excluding party "
+        "transfers and campaign-committee CNPJs)",
+        len(target_hashes),
+    )
+    if not target_hashes:
+        logger.info("enrich_donors_cnpj: nothing to do")
+        return {"considered": 0, "looked_up": 0, "enriched": 0}
+
+    # Step 2: download TSE — fails with HTTPStatusError if 403'd through retries
+    sector_by_hash: dict[str, str] = {}
+    cnpj_cache: dict[str, str] = {}
+    looked_up = 0
+
+    async with httpx.AsyncClient(headers=_TSE_HEADERS) as bapi_client:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_path = os.path.join(tmpdir, "tse.zip")
+            bytes_done = await _stream_tse_zip(zip_url, zip_path)
+            logger.info(
+                "enrich_donors_cnpj: TSE download complete (%.1f MB)",
+                bytes_done / (1024 * 1024),
+            )
+
+            with zipfile.ZipFile(zip_path) as zf:
+                members = [
+                    m for m in zf.namelist()
+                    if re.match(r"receitas_candidatos_2022.*\.csv", m, re.I)
+                ]
+                logger.info(
+                    "enrich_donors_cnpj: walking %d receitas CSVs",
+                    len(members),
+                )
+
+                for member in members:
+                    # Resolve column names for this file
+                    with zf.open(member) as raw:
+                        stream = TextIOWrapper(raw, encoding="latin-1", newline="")
+                        first_line = stream.readline()
+                        header = [h.strip().strip('"') for h in first_line.split(";")]
+                        cols = _resolve_columns(header)
+
+                    if "donor_doc" not in cols:
+                        continue
+
+                    with zf.open(member) as raw2:
+                        stream2 = TextIOWrapper(raw2, encoding="latin-1", newline="")
+                        reader = pd.read_csv(
+                            stream2,
+                            sep=";",
+                            encoding="latin-1",
+                            chunksize=20_000,
+                            low_memory=False,
+                            on_bad_lines="skip",
+                            dtype=str,
+                        )
+                        for chunk in reader:
+                            for _, row in chunk.iterrows():
+                                donor_doc_raw = row.get(cols["donor_doc"], "")
+                                clean = re.sub(r"\D", "", str(donor_doc_raw))
+                                if len(clean) != 14:
+                                    continue  # not a CNPJ
+                                doc_hash = _hash_doc(donor_doc_raw)
+                                if not doc_hash or doc_hash not in target_hashes:
+                                    continue  # not in our enrichment target set
+                                if doc_hash in sector_by_hash:
+                                    continue  # already done in this run
+                                sector = await lookup_cnpj_sector(
+                                    clean, bapi_client, cnpj_cache,
+                                )
+                                sector_by_hash[doc_hash] = sector
+                                looked_up += 1
+                                if looked_up % 50 == 0:
+                                    logger.info(
+                                        "enrich_donors_cnpj: %d looked up, "
+                                        "%d unique sectors so far",
+                                        looked_up,
+                                        len(set(sector_by_hash.values())),
+                                    )
+                                # Rate limit every BrasilAPI call
+                                await asyncio.sleep(rate_sleep)
+
+    logger.info(
+        "enrich_donors_cnpj: enrichment complete — %d hashes resolved",
+        len(sector_by_hash),
+    )
+
+    # Step 3: bulk update donors.sector_group, only for hashes whose lookup
+    # yielded a non-'outros' classification (no point overwriting outros
+    # with outros — that's a no-op but still hits Postgres).
+    apply_pairs = [
+        (h, s) for h, s in sector_by_hash.items() if s and s != "outros"
+    ]
+    enriched = 0
+    if apply_pairs:
+        CHUNK = 200
+        async with AsyncSessionLocal() as db:
+            for i in range(0, len(apply_pairs), CHUNK):
+                batch = apply_pairs[i : i + CHUNK]
+                values_sql = ", ".join(
+                    f"(:h{i+j}, :s{i+j})" for j in range(len(batch))
+                )
+                params: dict = {}
+                for j, (h, s) in enumerate(batch):
+                    params[f"h{i+j}"] = h
+                    params[f"s{i+j}"] = s
+                sql = text(f"""
+                    UPDATE donors d
+                    SET sector_group = v.sector
+                    FROM (VALUES {values_sql}) AS v(hash, sector)
+                    WHERE d.cnpj_cpf_hash = v.hash
+                """)
+                res = await db.execute(sql, params)
+                enriched += res.rowcount or 0
+                await db.commit()
+
+    logger.info(
+        "enrich_donors_cnpj: COMPLETE — considered=%d looked_up=%d enriched=%d",
+        len(target_hashes), looked_up, enriched,
+    )
+    return {
+        "considered": len(target_hashes),
+        "looked_up": looked_up,
+        "enriched": enriched,
+    }

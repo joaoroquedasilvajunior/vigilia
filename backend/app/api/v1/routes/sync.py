@@ -20,6 +20,7 @@ from app.analysis.party_discipline import compute_discipline_and_absence
 from app.ingestion.orientation_pipeline import sync_party_orientations
 from app.ingestion.tag_pipeline import tag_bills
 from app.ingestion.tse_pipeline import (
+    enrich_donors_cnpj,
     inspect_donors_csv,
     reclassify_donors,
     reclassify_donors_by_name,
@@ -136,6 +137,32 @@ async def trigger_reclassify_donors(
     """
     background_tasks.add_task(reclassify_donors_by_name)
     return {"status": "queued", "job": "reclassify_donors_by_name"}
+
+
+@router.post("/enrich-donors")
+async def trigger_enrich_donors(
+    background_tasks: BackgroundTasks,
+    _: Annotated[None, Depends(_verify_secret)],
+):
+    """
+    BrasilAPI-driven CNPJ enrichment for the ~400 corporate donors
+    currently classified 'outros'. Re-downloads TSE 2022 receitas to
+    recover raw CNPJs (which we never store; only their hashes), then
+    calls https://brasilapi.com.br/api/cnpj/v1/{cnpj} for each match
+    and writes the resulting sector_group back to donors.
+
+    Rate-limited to 1 req/sec to BrasilAPI; cached so duplicate CNPJs
+    don't re-hit the API. Estimated runtime ~7 minutes.
+
+    Will fail with 403 if TSE blocks the Railway IP — that's a
+    transient block, retry later.
+    """
+    background_tasks.add_task(enrich_donors_cnpj)
+    return {
+        "status": "queued",
+        "job": "enrich_donors_cnpj",
+        "estimated_minutes": 7,
+    }
 
 
 @router.post("/donors/reclassify-tse")
