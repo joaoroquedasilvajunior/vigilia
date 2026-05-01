@@ -113,6 +113,23 @@ async def _stream_tse_zip(url: str, dest_path: str) -> int:
                 await asyncio.sleep(wait)
                 continue
             raise
+        except (
+            httpx.ReadError,
+            httpx.ConnectError,
+            httpx.RemoteProtocolError,
+            httpx.ReadTimeout,
+        ) as exc:
+            # TSE's CDN sometimes accepts the request (HTTP 200) but cuts
+            # the connection mid-stream. Treat as a transient block and
+            # retry with the same exponential backoff.
+            last_exc = exc
+            wait = 30 * attempt
+            logger.warning(
+                "TSE download attempt %d hit %s; sleeping %ds before retry",
+                attempt, type(exc).__name__, wait,
+            )
+            await asyncio.sleep(wait)
+            continue
     if last_exc:
         raise last_exc
     raise RuntimeError("TSE download failed after retries with no recorded exception")
