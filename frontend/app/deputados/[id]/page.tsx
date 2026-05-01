@@ -1,5 +1,15 @@
 import type { Metadata } from "next";
-import { getLegislator, getLegislatorVotes, getClusters } from "@/lib/api";
+import {
+  getLegislator,
+  getLegislatorVotes,
+  getClusters,
+  getLegislatorDonors,
+  type LegislatorDonors,
+  type DonorBucket,
+  type DonorSector,
+  type NamedDonor,
+  type SectorVoteCorrelation,
+} from "@/lib/api";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 
@@ -99,6 +109,279 @@ function ScoreBar({
   );
 }
 
+// ── Donor section helpers ────────────────────────────────────────────────────
+const BUCKET_LABELS: Record<string, string> = {
+  party_fund: "Fundo partidário (FEFC)",
+  individual: "Pessoas físicas",
+  company:    "Pessoas jurídicas",
+  other:      "Outros",
+};
+
+const SECTOR_LABELS: Record<string, string> = {
+  agronegocio:        "Agronegócio",
+  financeiro:         "Setor financeiro",
+  construtoras:       "Construtoras",
+  religioso:          "Setor religioso",
+  saude:              "Saúde",
+  educacao:           "Educação",
+  midia:              "Mídia",
+  "energia-mineracao": "Energia / Mineração",
+  armas:              "Armas",
+  outros:             "Não classificado",
+};
+
+const THEME_LABELS_LOCAL: Record<string, string> = {
+  agronegocio:        "agronegócio",
+  "meio-ambiente":    "meio ambiente",
+  indigenas:          "povos indígenas",
+  tributacao:         "tributação",
+  "reforma-politica": "reforma política",
+  religiao:           "religião",
+  "direitos-lgbtqia": "direitos LGBTQIA+",
+  armas:              "armas",
+  "seguranca-publica": "segurança pública",
+  saude:              "saúde",
+  educacao:           "educação",
+  midia:              "mídia",
+};
+
+function fmtBRL(n: number): string {
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+}
+
+function FundingBar({
+  bucket,
+  totalReceived,
+}: {
+  bucket: DonorBucket;
+  totalReceived: number;
+}) {
+  const pct = totalReceived > 0 ? (bucket.total_brl / totalReceived) * 100 : 0;
+  // Color by funding source
+  const fillCls =
+    bucket.bucket === "party_fund"
+      ? "bg-text-warm"
+      : bucket.bucket === "individual"
+      ? "bg-cerrado"
+      : bucket.bucket === "company"
+      ? "bg-ochre"
+      : "bg-concreto-shadow";
+  return (
+    <div>
+      <div className="flex justify-between items-baseline text-sm mb-1">
+        <span className="text-brasilia">
+          {BUCKET_LABELS[bucket.bucket] ?? bucket.bucket}
+          <span className="text-xs text-text-warm ml-2">
+            ({bucket.donor_count})
+          </span>
+        </span>
+        <span className="font-mono text-ochre text-sm">{fmtBRL(bucket.total_brl)}</span>
+      </div>
+      <div className="h-2 bg-concreto-shadow rounded-full overflow-hidden">
+        <div
+          className={`h-full ${fillCls} rounded-full`}
+          style={{ width: `${pct.toFixed(1)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SectorRow({
+  s,
+  totalReceived,
+}: {
+  s: DonorSector;
+  totalReceived: number;
+}) {
+  const pct = totalReceived > 0 ? (s.total_brl / totalReceived) * 100 : 0;
+  const label = s.sector ? (SECTOR_LABELS[s.sector] ?? s.sector) : "Não classificado";
+  return (
+    <div>
+      <div className="flex justify-between items-baseline text-sm mb-1">
+        <span className="text-brasilia">
+          {label}
+          <span className="text-xs text-text-warm ml-2">({s.donor_count})</span>
+        </span>
+        <span className="font-mono text-ochre text-sm">{fmtBRL(s.total_brl)}</span>
+      </div>
+      <div className="h-1.5 bg-concreto-shadow rounded-full overflow-hidden">
+        <div
+          className="h-full bg-cerrado rounded-full"
+          style={{ width: `${pct.toFixed(1)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function NamedDonorRow({ d }: { d: NamedDonor }) {
+  const sectorLabel = d.sector
+    ? SECTOR_LABELS[d.sector] ?? d.sector
+    : "—";
+  return (
+    <li className="flex items-baseline justify-between gap-3 py-2 border-b border-concreto-shadow last:border-0">
+      <div className="min-w-0">
+        <p className="text-sm text-brasilia truncate">{d.name}</p>
+        <p className="text-xs text-text-warm">
+          {d.entity_type === "pessoa_juridica" ? "PJ" : "PF"} · {sectorLabel}
+        </p>
+      </div>
+      <span className="font-mono text-sm text-ochre shrink-0">
+        {fmtBRL(d.total_brl)}
+      </span>
+    </li>
+  );
+}
+
+function CorrelationCallout({ c }: { c: SectorVoteCorrelation }) {
+  // Render a plain-language sentence about how this deputy voted on
+  // bills thematically aligned with a sector that funded their campaign.
+  const sectorName = SECTOR_LABELS[c.sector] ?? c.sector;
+  const themeText = c.themes
+    .map((t) => THEME_LABELS_LOCAL[t] ?? t)
+    .join(" / ");
+  if (c.votes.total === 0) {
+    // We have donor money but no aligned bills to correlate against
+    return (
+      <p className="text-sm text-text-warm">
+        Recebeu <span className="font-mono text-ochre">{fmtBRL(c.amount_brl)}</span>{" "}
+        do setor <strong className="text-brasilia">{sectorName}</strong>. Nenhum
+        projeto sobre {themeText} foi votado no recorte atual.
+      </p>
+    );
+  }
+  return (
+    <p className="text-sm text-text-warm leading-relaxed">
+      Recebeu <span className="font-mono text-ochre">{fmtBRL(c.amount_brl)}</span>{" "}
+      do setor <strong className="text-brasilia">{sectorName}</strong> e votou{" "}
+      <span className="font-mono text-cerrado font-semibold">
+        SIM em {c.votes.sim}
+      </span>{" "}
+      e{" "}
+      <span className="font-mono text-[#C0392B] font-semibold">
+        NÃO em {c.votes.nao}
+      </span>{" "}
+      dos <span className="font-mono">{c.votes.total}</span> projetos sobre{" "}
+      {themeText}.
+    </p>
+  );
+}
+
+function DonorSection({ data }: { data: LegislatorDonors | null }) {
+  if (!data || (data.funding_breakdown.length === 0 && data.top_donors.length === 0)) {
+    return (
+      <section className="mb-8">
+        <h2 className="font-display text-xl font-bold text-brasilia mb-3">
+          Financiamento eleitoral
+          <span className="text-sm font-sans font-normal text-text-warm ml-2">
+            (TSE 2022)
+          </span>
+        </h2>
+        <p className="text-sm text-text-warm italic">
+          Sem vínculos de financiamento registrados no TSE 2022.
+        </p>
+      </section>
+    );
+  }
+
+  // Filter out "Não classificado" rows when they're the only thing — that
+  // means sector data is fully absent for this deputy and showing the row
+  // adds noise rather than information.
+  const meaningfulSectors = data.sector_breakdown.filter(
+    (s) => s.sector && s.sector !== "outros",
+  );
+  // Filter correlations that yielded no aligned-theme votes when they
+  // ALSO have <R$ 5k of non-PF money (the backend already filters this,
+  // but defend in depth).
+  const correlations = data.correlations;
+
+  return (
+    <section className="mb-8">
+      <h2 className="font-display text-xl font-bold text-brasilia mb-1">
+        Financiamento eleitoral
+        <span className="text-sm font-sans font-normal text-text-warm ml-2">
+          (TSE 2022)
+        </span>
+      </h2>
+      <p className="text-sm text-text-warm mb-5">
+        Total recebido:{" "}
+        <span className="font-mono text-ochre font-semibold">
+          {fmtBRL(data.total_received_brl)}
+        </span>
+      </p>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        {/* Funding source breakdown — always populated */}
+        <div className="rounded-lg border border-concreto-shadow bg-concreto p-5">
+          <h3 className="font-display text-sm font-bold text-brasilia uppercase tracking-wider mb-4">
+            Origem dos recursos
+          </h3>
+          <div className="space-y-3">
+            {data.funding_breakdown.map((b) => (
+              <FundingBar
+                key={b.bucket}
+                bucket={b}
+                totalReceived={data.total_received_brl}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Top named donors */}
+        <div className="rounded-lg border border-concreto-shadow bg-concreto p-5">
+          <h3 className="font-display text-sm font-bold text-brasilia uppercase tracking-wider mb-3">
+            Maiores doadores nominados
+          </h3>
+          {data.top_donors.length === 0 ? (
+            <p className="text-sm text-text-warm italic">
+              Sem doadores nominados além de transferências de fundo partidário.
+            </p>
+          ) : (
+            <ul>
+              {data.top_donors.map((d, i) => (
+                <NamedDonorRow key={`${d.name}-${i}`} d={d} />
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {/* Sector breakdown — only render when there's signal beyond "outros" */}
+      {meaningfulSectors.length > 0 && (
+        <div className="rounded-lg border border-concreto-shadow bg-concreto p-5 mb-6">
+          <h3 className="font-display text-sm font-bold text-brasilia uppercase tracking-wider mb-4">
+            Por setor econômico
+          </h3>
+          <div className="space-y-3">
+            {meaningfulSectors.map((s) => (
+              <SectorRow
+                key={s.sector ?? "none"}
+                s={s}
+                totalReceived={data.total_received_brl}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Correlation callouts — only render when there's signal */}
+      {correlations.length > 0 && (
+        <div className="rounded-lg border-l-[3px] border-l-ochre border border-concreto-shadow bg-concreto p-5">
+          <h3 className="font-display text-sm font-bold text-brasilia uppercase tracking-wider mb-3">
+            Doação ↔ voto temático
+          </h3>
+          <div className="space-y-3">
+            {correlations.map((c) => (
+              <CorrelationCallout key={c.sector} c={c} />
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default async function DeputadoProfilePage({
   params,
 }: {
@@ -106,12 +389,13 @@ export default async function DeputadoProfilePage({
 }) {
   const { id } = await params;
 
-  let legislator, votesData, clustersData;
+  let legislator, votesData, clustersData, donorsData: LegislatorDonors | null;
   try {
-    [legislator, votesData, clustersData] = await Promise.all([
+    [legislator, votesData, clustersData, donorsData] = await Promise.all([
       getLegislator(id),
       getLegislatorVotes(id, 1),
       getClusters().catch(() => ({ clusters: [] })),
+      getLegislatorDonors(id).catch(() => null),
     ]);
   } catch {
     notFound();
@@ -243,6 +527,9 @@ export default async function DeputadoProfilePage({
           </div>
         </div>
       </div>
+
+      {/* Donor exposure */}
+      <DonorSection data={donorsData} />
 
       {/* Voting history */}
       <section>

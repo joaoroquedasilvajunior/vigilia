@@ -121,6 +121,47 @@ export const getLegislator = (id: string) =>
 export const getLegislatorVotes = (id: string, page = 1) =>
   apiFetch<PaginatedResponse<VoteWithBill>>(`/legislators/${id}/votes?page=${page}`);
 
+export interface DonorBucket {
+  bucket: "party_fund" | "individual" | "company" | "other";
+  donor_count: number;
+  total_brl: number;
+}
+export interface DonorSector {
+  sector: string | null;
+  donor_count: number;
+  total_brl: number;
+  top_donor_names: string[];
+}
+export interface NamedDonor {
+  name: string;
+  sector: string | null;
+  entity_type: "pessoa_fisica" | "pessoa_juridica" | null;
+  total_brl: number;
+}
+export interface SectorVoteCorrelation {
+  sector: string;
+  amount_brl: number;
+  themes: string[];
+  votes: {
+    sim: number;
+    nao: number;
+    abstencao: number;
+    ausente: number;
+    total: number;
+  };
+}
+export interface LegislatorDonors {
+  legislator_id: string;
+  total_received_brl: number;
+  funding_breakdown: DonorBucket[];
+  sector_breakdown: DonorSector[];
+  top_donors: NamedDonor[];
+  correlations: SectorVoteCorrelation[];
+}
+
+export const getLegislatorDonors = (id: string) =>
+  apiFetch<LegislatorDonors>(`/legislators/${id}/donors`);
+
 // Bills
 export const getBills = (params?: {
   type?: string;

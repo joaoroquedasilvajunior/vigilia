@@ -2,7 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
@@ -102,6 +102,190 @@ async def get_legislator_votes(
             }
             for vote, bill in rows
         ],
+    }
+
+
+# ── Donor exposure ────────────────────────────────────────────────────────
+# Sector → relevant bill themes mapping. Source: spec.
+# When sector_group becomes reliable across the donor table, this map drives
+# the correlation calculation per legislator. Until then, most sectors will
+# return zero matches because all donors are classified "outros".
+_SECTOR_TO_THEMES: dict[str, list[str]] = {
+    "agronegocio":   ["agronegocio", "meio-ambiente", "indigenas"],
+    "financeiro":    ["tributacao"],
+    "construtoras":  ["reforma-politica", "tributacao"],
+    "religioso":     ["religiao", "direitos-lgbtqia"],
+    "armas":         ["armas", "seguranca-publica"],
+    "saude":         ["saude"],
+    "educacao":      ["educacao"],
+    "midia":         ["midia"],
+    "energia-mineracao": ["meio-ambiente", "indigenas"],
+}
+
+
+@router.get("/{legislator_id}/donors")
+async def get_legislator_donors(
+    legislator_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Donor exposure for one deputy: funding-source breakdown,
+    sector breakdown, top named donors, and donor↔vote correlations
+    where the spec's sector→theme map has matching data.
+    """
+    # 1. Funding source breakdown (party fund / individual / company).
+    # This is the breakdown that ALWAYS has real signal in current data —
+    # 86% of campaign money is FEFC party-fund transfers post-2015.
+    funding = (await db.execute(text("""
+        WITH classified AS (
+            SELECT
+                CASE
+                    WHEN UPPER(d.name) LIKE '%DIREÇÃO%'
+                      OR UPPER(d.name) LIKE '%DIRECAO%' THEN 'party_fund'
+                    WHEN d.entity_type = 'pessoa_fisica' THEN 'individual'
+                    WHEN d.entity_type = 'pessoa_juridica' THEN 'company'
+                    ELSE 'other'
+                END AS bucket,
+                dl.amount_brl,
+                d.id AS donor_id
+            FROM donor_links dl
+            JOIN donors d ON dl.donor_id = d.id
+            WHERE dl.legislator_id = :leg_id
+        )
+        SELECT
+            bucket,
+            COUNT(DISTINCT donor_id) AS donor_count,
+            SUM(amount_brl)::float    AS total_brl
+        FROM classified
+        GROUP BY bucket
+        ORDER BY total_brl DESC
+    """), {"leg_id": str(legislator_id)})).all()
+    funding_breakdown = [
+        {"bucket": r.bucket, "donor_count": r.donor_count, "total_brl": r.total_brl}
+        for r in funding
+    ]
+    total_received = sum(r["total_brl"] for r in funding_breakdown)
+
+    # 2. Sector breakdown — top 8 sector_groups by total. Most rows will be
+    # "outros" today; the section is structurally ready for when sector
+    # classification is fixed.
+    sectors = (await db.execute(text("""
+        SELECT
+            d.sector_group,
+            COUNT(DISTINCT d.id)        AS donor_count,
+            SUM(dl.amount_brl)::float    AS total_brl,
+            (
+                SELECT array_agg(name ORDER BY total DESC) FILTER (WHERE rn <= 5)
+                FROM (
+                    SELECT d2.name, SUM(dl2.amount_brl) AS total,
+                           ROW_NUMBER() OVER (ORDER BY SUM(dl2.amount_brl) DESC) AS rn
+                    FROM donor_links dl2
+                    JOIN donors d2 ON dl2.donor_id = d2.id
+                    WHERE dl2.legislator_id = :leg_id
+                      AND d2.sector_group = d.sector_group
+                      AND UPPER(d2.name) NOT LIKE '%DIREÇÃO%'
+                      AND UPPER(d2.name) NOT LIKE '%DIRECAO%'
+                    GROUP BY d2.name
+                ) sub
+            ) AS top_donor_names
+        FROM donor_links dl
+        JOIN donors d ON dl.donor_id = d.id
+        WHERE dl.legislator_id = :leg_id
+        GROUP BY d.sector_group
+        ORDER BY total_brl DESC
+        LIMIT 8
+    """), {"leg_id": str(legislator_id)})).all()
+    sector_breakdown = [
+        {
+            "sector": r.sector_group,
+            "donor_count": r.donor_count,
+            "total_brl": r.total_brl,
+            "top_donor_names": [n for n in (r.top_donor_names or []) if n],
+        }
+        for r in sectors
+    ]
+
+    # 3. Top 5 named individual donors (excluding party-fund transfers,
+    # which aren't "named donors" in any meaningful civic-intelligence sense).
+    top_donors_rows = (await db.execute(text("""
+        SELECT d.name, d.sector_group, d.entity_type,
+               SUM(dl.amount_brl)::float AS total_brl
+        FROM donor_links dl
+        JOIN donors d ON dl.donor_id = d.id
+        WHERE dl.legislator_id = :leg_id
+          AND UPPER(d.name) NOT LIKE '%DIREÇÃO%'
+          AND UPPER(d.name) NOT LIKE '%DIRECAO%'
+        GROUP BY d.id, d.name, d.sector_group, d.entity_type
+        ORDER BY total_brl DESC
+        LIMIT 5
+    """), {"leg_id": str(legislator_id)})).all()
+    top_donors = [
+        {
+            "name": r.name,
+            "sector": r.sector_group,
+            "entity_type": r.entity_type,
+            "total_brl": r.total_brl,
+        }
+        for r in top_donors_rows
+    ]
+
+    # 4. Donor ↔ vote correlations. For each sector with non-trivial
+    # spending (≥ R$ 5 000) AND a known theme map AND non-party-fund money,
+    # count how this deputy voted on bills tagged with the mapped themes.
+    correlations: list[dict] = []
+    for sec in sector_breakdown:
+        sector = sec["sector"]
+        if sector not in _SECTOR_TO_THEMES:
+            continue
+        # We only count NON-party-fund money so the bond between $$ and
+        # vote behaviour is meaningful (party transfers don't imply
+        # sector-level capture).
+        non_pf_amount = (await db.execute(text("""
+            SELECT COALESCE(SUM(dl.amount_brl), 0)::float AS amount
+            FROM donor_links dl
+            JOIN donors d ON dl.donor_id = d.id
+            WHERE dl.legislator_id = :leg_id
+              AND d.sector_group = :sector
+              AND UPPER(d.name) NOT LIKE '%DIREÇÃO%'
+              AND UPPER(d.name) NOT LIKE '%DIRECAO%'
+        """), {"leg_id": str(legislator_id), "sector": sector})).scalar()
+        if not non_pf_amount or non_pf_amount < 5000:
+            continue
+
+        themes = _SECTOR_TO_THEMES[sector]
+        votes_row = (await db.execute(text("""
+            SELECT
+                COUNT(*) FILTER (WHERE v.vote_value = 'sim')        AS sim,
+                COUNT(*) FILTER (WHERE v.vote_value = 'não')        AS nao,
+                COUNT(*) FILTER (WHERE v.vote_value = 'abstencao')  AS abstencao,
+                COUNT(*) FILTER (WHERE v.vote_value = 'ausente')    AS ausente,
+                COUNT(*)                                             AS total
+            FROM votes v
+            JOIN bills b ON v.bill_id = b.id
+            WHERE v.legislator_id = :leg_id
+              AND b.theme_tags && :themes
+        """), {"leg_id": str(legislator_id), "themes": themes})).one()
+
+        correlations.append({
+            "sector": sector,
+            "amount_brl": float(non_pf_amount),
+            "themes": themes,
+            "votes": {
+                "sim":       votes_row.sim,
+                "nao":       votes_row.nao,
+                "abstencao": votes_row.abstencao,
+                "ausente":   votes_row.ausente,
+                "total":     votes_row.total,
+            },
+        })
+
+    return {
+        "legislator_id":     str(legislator_id),
+        "total_received_brl": total_received,
+        "funding_breakdown": funding_breakdown,
+        "sector_breakdown":  sector_breakdown,
+        "top_donors":        top_donors,
+        "correlations":      correlations,
     }
 
 
