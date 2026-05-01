@@ -296,6 +296,16 @@ function DonorSection({ data }: { data: LegislatorDonors | null }) {
   // but defend in depth).
   const correlations = data.correlations;
 
+  // Surface FEFC (party-fund transfers) as a top-line signal — for most
+  // deputies post-2015, it's the dominant funding source and that's the
+  // honest civic-data story to lead with.
+  const fefc = data.funding_breakdown.find((b) => b.bucket === "party_fund");
+  const fefcAmount = fefc?.total_brl ?? 0;
+  const fefcPct =
+    data.total_received_brl > 0
+      ? Math.round((fefcAmount / data.total_received_brl) * 100)
+      : 0;
+
   return (
     <section className="mb-8">
       <h2 className="font-display text-xl font-bold text-brasilia mb-1">
@@ -304,12 +314,28 @@ function DonorSection({ data }: { data: LegislatorDonors | null }) {
           (TSE 2022)
         </span>
       </h2>
-      <p className="text-sm text-text-warm mb-5">
+      <p className="text-sm text-text-warm">
         Total recebido:{" "}
         <span className="font-mono text-ochre font-semibold">
           {fmtBRL(data.total_received_brl)}
         </span>
       </p>
+      {fefcAmount > 0 && (
+        <p className="text-sm text-brasilia mb-5 mt-1">
+          <span className="text-base mr-1" aria-hidden="true">
+            💼
+          </span>
+          <strong>Fundo Público (FEFC):</strong>{" "}
+          <span className="font-mono text-ochre font-semibold">
+            {fmtBRL(fefcAmount)}
+          </span>
+          <span className="text-text-warm">
+            {" "}
+            — transferência partidária ({fefcPct}% do total)
+          </span>
+        </p>
+      )}
+      {fefcAmount === 0 && <div className="mb-5" />}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         {/* Funding source breakdown — always populated */}
@@ -367,7 +393,7 @@ function DonorSection({ data }: { data: LegislatorDonors | null }) {
 
       {/* Correlation callouts — only render when there's signal */}
       {correlations.length > 0 && (
-        <div className="rounded-lg border-l-[3px] border-l-ochre border border-concreto-shadow bg-concreto p-5">
+        <div className="rounded-lg border-l-[3px] border-l-ochre border border-concreto-shadow bg-concreto p-5 mb-4">
           <h3 className="font-display text-sm font-bold text-brasilia uppercase tracking-wider mb-3">
             Doação ↔ voto temático
           </h3>
@@ -378,6 +404,23 @@ function DonorSection({ data }: { data: LegislatorDonors | null }) {
           </div>
         </div>
       )}
+
+      {/* Civic-context footnote — turns the data limitation into education */}
+      <p className="mt-4 text-xs text-text-warm leading-relaxed border-l-2 border-ochre/50 pl-3">
+        Desde 2015, doações de empresas privadas são proibidas no Brasil
+        (Lei nº 13.165/2015). A maioria dos deputados é financiada pelo{" "}
+        <strong className="text-brasilia">
+          Fundo Especial de Financiamento de Campanha (FEFC)
+        </strong>
+        , distribuído pelo partido a partir de recursos públicos do
+        orçamento federal.{" "}
+        <Link
+          href="/metodologia"
+          className="text-cerrado hover:text-ochre underline"
+        >
+          Metodologia →
+        </Link>
+      </p>
     </section>
   );
 }
