@@ -113,6 +113,39 @@ export default async function MetodologiaPage() {
             risco constitucional.
           </li>
         </ul>
+
+        <h3 className="font-display text-lg font-bold text-brasilia mt-6 mb-2">
+          Limitação: votações simbólicas e substitutivos
+        </h3>
+        <p>
+          Algumas leis aprovadas pelo Congresso não possuem registros de
+          votação nominal na API da Câmara. Isso ocorre em três casos:
+        </p>
+        <ol>
+          <li>
+            <strong>Votação simbólica</strong> — o projeto foi aprovado por
+            aclamação, sem chamada nominal. Não há registro individual por
+            deputado.
+          </li>
+          <li>
+            <strong>Substitutivo do Senado</strong> — quando o Senado altera
+            um projeto, a votação final ocorre sobre o substitutivo, cujo ID
+            não está vinculado ao projeto original na API pública.
+          </li>
+          <li>
+            <strong>Aprovação em caráter conclusivo</strong> — projetos
+            aprovados apenas pelas comissões, sem passar pelo plenário.
+          </li>
+        </ol>
+        <p>
+          Exemplos afetados: <strong>Lei 14.611/2023</strong>{" "}
+          (Igualdade Salarial), <strong>EC 137/2023</strong> (cotas
+          raciais em partidos).
+        </p>
+        <p>
+          Nesses casos, a Vigília indica que a lei foi aprovada mas não
+          consegue mostrar como cada deputado votou individualmente.
+        </p>
       </Section>
 
       <Section n={2} title="Coalizões comportamentais">
