@@ -35,11 +35,45 @@ LEI_TO_PL_MAP: dict[str, tuple[str, int, int]] = {
 # lowercased query — first hit wins. Order accordingly when entries could
 # overlap (longer / more specific phrases first).
 BILL_KEYWORD_MAP: list[tuple[str, tuple[str, int, int]]] = [
-    # PL 2162/2023 — Anistia / dosimetria 8 de Janeiro
+    # ── PL 2162/2023 — Anistia / dosimetria 8 de Janeiro ──
     ("dosimetria 8 de janeiro", ("PL", 2162, 2023)),
+    ("anistia 8 de janeiro",    ("PL", 2162, 2023)),
     ("dosimetria",              ("PL", 2162, 2023)),
     ("8 de janeiro",            ("PL", 2162, 2023)),
-    ("anistia 8 de janeiro",    ("PL", 2162, 2023)),
+
+    # ── PLP 68/2024 — Reforma Tributária IBS/CBS ──
+    # Long/specific first so they win over bare "ibs" / "cbs"
+    ("reforma tributária ibs",  ("PLP", 68, 2024)),
+    ("reforma tributária cbs",  ("PLP", 68, 2024)),
+    ("ibs e cbs",               ("PLP", 68, 2024)),
+    ("plp 68",                  ("PLP", 68, 2024)),
+    ("68/2024",                 ("PLP", 68, 2024)),
+    ("ibs",                     ("PLP", 68, 2024)),
+    ("cbs",                     ("PLP", 68, 2024)),
+
+    # ── PEC 3/2021 — PEC da Blindagem ──
+    ("pec da blindagem",        ("PEC", 3, 2021)),
+    ("imunidade parlamentar",   ("PEC", 3, 2021)),
+    ("blindagem",               ("PEC", 3, 2021)),
+    ("pec 3",                   ("PEC", 3, 2021)),
+
+    # ── PL 3640/2023 — Limites ao STF / decisões monocráticas ──
+    ("decisões monocráticas",   ("PL", 3640, 2023)),
+    ("limites ao stf",          ("PL", 3640, 2023)),
+    ("stf monocrático",         ("PL", 3640, 2023)),
+    ("monocrática",             ("PL", 3640, 2023)),
+    ("pl 3640",                 ("PL", 3640, 2023)),
+
+    # ── PEC 45/2019 — Reforma Tributária original ──
+    ("reforma tributária 2019", ("PEC", 45, 2019)),
+    ("pec 45",                  ("PEC", 45, 2019)),
+
+    # ── PL 1087/2025 — Isenção do Imposto de Renda até R$5k ──
+    # Lei mapping (LEI_TO_PL_MAP) already handles "Lei 15.270"; these
+    # cover the popular-name surface area.
+    ("imposto de renda 5000",   ("PL", 1087, 2025)),
+    ("isenção ir",              ("PL", 1087, 2025)),
+    ("ir 5 mil",                ("PL", 1087, 2025)),
 ]
 
 
