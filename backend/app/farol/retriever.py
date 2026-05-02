@@ -454,6 +454,52 @@ async def _vote_pattern_bill(intent: ClassifyResult, db: AsyncSession) -> Retrie
     abst_n  = tally.get("abstenção", 0)
     aus_n   = tally.get("ausente", 0)
 
+    # ── Status-aware framing for the LLM ──────────────────────────────────
+    # The recorded "vote_value" per (legislator, bill) is the LAST vote we
+    # ingested for that pair (ON CONFLICT DO UPDATE). For multi-turn PEC
+    # votings with many destaques, that last vote is often AGAINST a
+    # particular destaque, not against the bill itself — leaving us with a
+    # nao-dominant placar even on bills like PEC 45/2019 (Reforma Tributária)
+    # that were unambiguously approved. Without explicit framing, the LLM
+    # reads the math and reports "rejected" — wrong and embarrassing.
+    status_raw = bill.status or ""
+    status_lc  = status_raw.lower()
+    is_enacted = any(s in status_lc for s in (
+        "transformado em norma jurídica",
+        "promulgada", "promulgado",
+        "sancionada", "sancionado",
+        "convertida em lei", "convertido em lei",
+    ))
+    is_rejected = any(s in status_lc for s in ("rejeitad", "arquivad"))
+    nao_dominant = nao_n > sim_n
+
+    framing_lines: list[str] = []
+    if is_enacted and nao_dominant:
+        framing_lines.extend([
+            "",
+            "⚠️ NOTA IMPORTANTE PARA INTERPRETAÇÃO:",
+            f"O status oficial desta proposição é: \"{status_raw}\".",
+            "Ou seja, foi APROVADA pelo Congresso e está em vigor.",
+            "O placar acima (com 'não' dominante) reflete o ÚLTIMO voto "
+            "registrado por deputado em uma votação multi-turno com "
+            "destaques. Em PECs e projetos complexos, deputados votam "
+            "várias vezes sobre emendas e destaques — o registro individual "
+            "pode mostrar 'não' numa emenda específica, mesmo que o projeto "
+            "tenha sido aprovado no cômputo geral.",
+            "NÃO interprete este placar como rejeição. Informe ao usuário "
+            "que a proposta foi APROVADA e está em vigor.",
+        ])
+    elif is_enacted:
+        framing_lines.extend([
+            "",
+            f"Status oficial: {status_raw} — aprovada e em vigor.",
+        ])
+    elif is_rejected:
+        framing_lines.extend([
+            "",
+            f"Status oficial: {status_raw} — proposta foi rejeitada/arquivada pelo plenário.",
+        ])
+
     lines = [
         f"Resultado da votação — {bill_label}:",
         f"  Título: {bill.title[:120]}",
@@ -464,6 +510,7 @@ async def _vote_pattern_bill(intent: ClassifyResult, db: AsyncSession) -> Retrie
         f"  ❌ Não:        {nao_n}",
         f"  🟡 Abstenção:  {abst_n}",
         f"  ⬜ Ausente:    {aus_n}",
+        *framing_lines,
         "",
         f"Amostra de votos (até 50, ordenados por posição / UF):",
     ]
