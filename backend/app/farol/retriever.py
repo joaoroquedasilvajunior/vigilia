@@ -19,9 +19,14 @@ from app.farol.classifier import ClassifyResult
 # that became that lei. This map is curated for laws whose source bill we
 # care about. New entries: add the lei in both punctuated and bare forms.
 LEI_TO_PL_MAP: dict[str, tuple[str, int, int]] = {
+    # Lei 15.270/2025 — Reforma do IR (PL 1087/2025, camara_id 2487436)
     "15.270/2025": ("PL", 1087, 2025),
     "15270/2025":  ("PL", 1087, 2025),
     "15270":       ("PL", 1087, 2025),
+    # Lei 14.611/2023 — Igualdade Salarial (PL 1085/2023, camara_id 2351179)
+    "14.611/2023": ("PL", 1085, 2023),
+    "14611/2023":  ("PL", 1085, 2023),
+    "14611":       ("PL", 1085, 2023),
 }
 
 

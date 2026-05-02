@@ -266,12 +266,18 @@ HIGH_PROFILE_BILL_CAMARA_IDS: list[int] = [
     2192459,  # PEC  6/2019   — Reforma da Previdência
     2256735,  # PL 2630/2020  — Lei das Fake News
     345311,   # PL  490/2007  — Marco Temporal Indígena
-    257161,   # PL 2159/2021  — Licenciamento Ambiental
+    257161,   # PL 2159/2021  — Licenciamento Ambiental (Transformado em Norma 2025)
     46249,    # PL 6299/2002  — Agrotóxicos
     2209381,  # PL 3723/2019  — Flexibilização porte de armas
     2262083,  # PEC 32/2020   — Reforma Administrativa
     2233802,  # PEC 221/2019  — Escala 6x1 / Redução da jornada de trabalho
     2487436,  # PL 1087/2025  → Lei 15.270/2025 — Reforma do IR
+    2358548,  # PL 2162/2023  — Anistia 8 de Janeiro
+    2270800,  # PEC  3/2021   — PEC da Blindagem (imunidade parlamentar)
+    2374540,  # PL 3640/2023  — Limita decisões monocráticas STF
+    2430143,  # PLP 68/2024   — Regulamentação reforma tributária IBS/CBS
+    2352476,  # PEC  9/2023   — Anistia partidos / cotas raciais
+    2434493,  # PL 1904/2024  — Equiparação aborto após 22 semanas
 ]
 
 
