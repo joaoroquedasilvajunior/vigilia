@@ -262,15 +262,16 @@ async def sync_votes_for_bill(bill_camara_id: int) -> None:
 # These are pulled on the next scheduled sync so the votes table is populated
 # even before the full nightly vote-scan is implemented.
 HIGH_PROFILE_BILL_CAMARA_IDS: list[int] = [
-    2196833,  # PEC 45/2019  — Reforma Tributária
-    2192459,  # PEC  6/2019  — Reforma da Previdência
-    2256735,  # PL 2630/2020 — Lei das Fake News
-    345311,   # PL  490/2007 — Marco Temporal Indígena
-    257161,   # PL 2159/2021 — Licenciamento Ambiental
-    46249,    # PL 6299/2002 — Agrotóxicos
-    2209381,  # PL 3723/2019 — Flexibilização porte de armas
-    2262083,  # PEC 32/2020  — Reforma Administrativa
-    2233802,  # PEC 221/2019 — Escala 6x1 / Redução da jornada de trabalho
+    2196833,  # PEC 45/2019   — Reforma Tributária
+    2192459,  # PEC  6/2019   — Reforma da Previdência
+    2256735,  # PL 2630/2020  — Lei das Fake News
+    345311,   # PL  490/2007  — Marco Temporal Indígena
+    257161,   # PL 2159/2021  — Licenciamento Ambiental
+    46249,    # PL 6299/2002  — Agrotóxicos
+    2209381,  # PL 3723/2019  — Flexibilização porte de armas
+    2262083,  # PEC 32/2020   — Reforma Administrativa
+    2233802,  # PEC 221/2019  — Escala 6x1 / Redução da jornada de trabalho
+    2487436,  # PL 1087/2025  → Lei 15.270/2025 — Reforma do IR
 ]
 
 

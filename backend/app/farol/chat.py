@@ -8,7 +8,7 @@ import anthropic
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.farol.classifier import classify_query
-from app.farol.retriever import retrieve
+from app.farol.retriever import apply_lei_overrides, retrieve
 from app.farol.session import append_turn, get_history
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,10 @@ async def farol_chat(
     """
     # 1. Classify + entity extraction (haiku, cheap)
     intent = await classify_query(message, client)
+    # 1a. If the query refers to a Lei number we map to a known PL/PEC,
+    #     populate bill_type/number/year so vote_pattern + bill_lookup
+    #     can find votes by the source bill.
+    intent = apply_lei_overrides(message, intent)
     logger.debug("farol intent: category=%s entities=%s", intent.category, intent)
 
     # 2. Retrieve relevant DB context

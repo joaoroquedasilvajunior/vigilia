@@ -5,12 +5,83 @@ context_text is injected into the Farol prompt.
 sources_list is returned to the frontend for clickable citations.
 """
 import logging
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 
 from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.farol.classifier import ClassifyResult
+
+
+# ── Lei → PL lookup ──────────────────────────────────────────────────────────
+# When users ask "Como votaram na Lei X" Farol needs to find the PL/PEC
+# that became that lei. This map is curated for laws whose source bill we
+# care about. New entries: add the lei in both punctuated and bare forms.
+LEI_TO_PL_MAP: dict[str, tuple[str, int, int]] = {
+    "15.270/2025": ("PL", 1087, 2025),
+    "15270/2025":  ("PL", 1087, 2025),
+    "15270":       ("PL", 1087, 2025),
+}
+
+
+def extract_lei_number(query: str) -> str | None:
+    """
+    Pull the lei number from a free-form Portuguese query, e.g.
+    'Como votaram na Lei 15.270/2025?' → '15270/2025'
+    'Lei nº 15.270 de 2025'           → '15270/2025'
+    'Lei 15270'                        → '15270'
+    Returns the digit-only form (suitable for LEI_TO_PL_MAP lookup), or None.
+    """
+    if not query:
+        return None
+    # Pattern 1: "Lei [nº] X.YYY/AAAA" or "Lei X.YYY/AAAA"
+    m = re.search(
+        r"lei\s*n?[º°.]?\s*(\d+(?:[.,]\d+)?)\s*(?:/|\bde\b)\s*(\d{4})",
+        query,
+        re.IGNORECASE,
+    )
+    if m:
+        num = m.group(1).replace(".", "").replace(",", "")
+        year = m.group(2)
+        return f"{num}/{year}"
+    # Pattern 2: bare "Lei X.YYY"
+    m = re.search(
+        r"lei\s*n?[º°.]?\s*(\d+(?:[.,]\d+)?)",
+        query,
+        re.IGNORECASE,
+    )
+    if m:
+        num = m.group(1).replace(".", "").replace(",", "")
+        return num
+    return None
+
+
+def apply_lei_overrides(query: str, intent: ClassifyResult) -> ClassifyResult:
+    """
+    If the user query references a Lei number that maps to a known
+    PL/PEC, populate intent.bill_type/number/year so the retrievers
+    treat it as a bill query. Idempotent: if the intent already has
+    a bill identifier, that wins.
+    """
+    if intent.bill_type and intent.bill_number and intent.bill_year:
+        return intent
+    lei = extract_lei_number(query or "")
+    if not lei:
+        return intent
+    mapped = LEI_TO_PL_MAP.get(lei)
+    if not mapped:
+        return intent
+    btype, bnumber, byear = mapped
+    logger.info(
+        "apply_lei_overrides: lei=%s → %s %d/%d", lei, btype, bnumber, byear,
+    )
+    return replace(
+        intent,
+        bill_type=btype,
+        bill_number=bnumber,
+        bill_year=byear,
+    )
 from app.models import (
     BehavioralCluster,
     Bill,
