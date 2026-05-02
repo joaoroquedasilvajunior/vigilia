@@ -29,6 +29,30 @@ LEI_TO_PL_MAP: dict[str, tuple[str, int, int]] = {
     "14611":       ("PL", 1085, 2023),
 }
 
+# ── Popular-name shortcuts ───────────────────────────────────────────────────
+# Many bills are publicly known by a topic phrase ("Dosimetria 8 de Janeiro",
+# "Marco Temporal") rather than their PL number. Substring match against the
+# lowercased query — first hit wins. Order accordingly when entries could
+# overlap (longer / more specific phrases first).
+BILL_KEYWORD_MAP: list[tuple[str, tuple[str, int, int]]] = [
+    # PL 2162/2023 — Anistia / dosimetria 8 de Janeiro
+    ("dosimetria 8 de janeiro", ("PL", 2162, 2023)),
+    ("dosimetria",              ("PL", 2162, 2023)),
+    ("8 de janeiro",            ("PL", 2162, 2023)),
+    ("anistia 8 de janeiro",    ("PL", 2162, 2023)),
+]
+
+
+def _match_keyword_alias(query: str) -> tuple[str, int, int] | None:
+    """First-match wins. Returns (type, number, year) or None."""
+    if not query:
+        return None
+    q = query.lower()
+    for kw, mapped in BILL_KEYWORD_MAP:
+        if kw in q:
+            return mapped
+    return None
+
 
 def extract_lei_number(query: str) -> str | None:
     """
@@ -64,32 +88,56 @@ def extract_lei_number(query: str) -> str | None:
 
 def apply_lei_overrides(query: str, intent: ClassifyResult) -> ClassifyResult:
     """
-    If the user query references a Lei number that maps to a known
-    PL/PEC, populate intent.bill_type/number/year from our curated map.
+    Resolve the bill identifier from the query in priority order:
 
-    The mapping ALWAYS wins over the classifier's guess when a Lei
-    number is present in the query: Haiku tends to parse "Lei 15.270/2025"
-    as "PL 15270/2025", which is wrong (the PL that *became* that lei
-    is PL 1087/2025). The curated map is the source of truth here.
+      1. Lei number (extract_lei_number → LEI_TO_PL_MAP)
+         e.g. "Lei 15.270/2025" → PL 1087/2025
+      2. Popular-name keyword (BILL_KEYWORD_MAP)
+         e.g. "Como votaram na Dosimetria 8 de Janeiro" → PL 2162/2023
+
+    Both override whatever the classifier extracted: when the user
+    invokes a known alias, the curated map is the source of truth.
+    Function name kept for backward compatibility with callers in
+    chat.py — covers leis AND keyword shortcuts now.
     """
+    # 1. Lei → PL mapping
     lei = extract_lei_number(query or "")
-    if not lei:
-        return intent
-    mapped = LEI_TO_PL_MAP.get(lei)
-    if not mapped:
-        return intent
-    btype, bnumber, byear = mapped
-    logger.info(
-        "apply_lei_overrides: lei=%s → %s %d/%d (was %s %s/%s)",
-        lei, btype, bnumber, byear,
-        intent.bill_type, intent.bill_number, intent.bill_year,
-    )
-    return replace(
-        intent,
-        bill_type=btype,
-        bill_number=bnumber,
-        bill_year=byear,
-    )
+    if lei:
+        mapped = LEI_TO_PL_MAP.get(lei)
+        if mapped:
+            btype, bnumber, byear = mapped
+            logger.info(
+                "apply_lei_overrides: lei=%s → %s %d/%d (was %s %s/%s)",
+                lei, btype, bnumber, byear,
+                intent.bill_type, intent.bill_number, intent.bill_year,
+            )
+            return replace(
+                intent,
+                bill_type=btype,
+                bill_number=bnumber,
+                bill_year=byear,
+            )
+
+    # 2. Popular-name keyword shortcut. Only fires when the classifier
+    # didn't already extract a bill identifier — we don't want a casual
+    # mention of "8 de janeiro" in a query that ALSO cites a different
+    # PL to override the explicit bill the user named.
+    if not (intent.bill_type and intent.bill_number and intent.bill_year):
+        kw_mapped = _match_keyword_alias(query)
+        if kw_mapped:
+            btype, bnumber, byear = kw_mapped
+            logger.info(
+                "apply_lei_overrides: keyword alias → %s %d/%d",
+                btype, bnumber, byear,
+            )
+            return replace(
+                intent,
+                bill_type=btype,
+                bill_number=bnumber,
+                bill_year=byear,
+            )
+
+    return intent
 from app.models import (
     BehavioralCluster,
     Bill,
