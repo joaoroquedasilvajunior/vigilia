@@ -60,12 +60,13 @@ def extract_lei_number(query: str) -> str | None:
 def apply_lei_overrides(query: str, intent: ClassifyResult) -> ClassifyResult:
     """
     If the user query references a Lei number that maps to a known
-    PL/PEC, populate intent.bill_type/number/year so the retrievers
-    treat it as a bill query. Idempotent: if the intent already has
-    a bill identifier, that wins.
+    PL/PEC, populate intent.bill_type/number/year from our curated map.
+
+    The mapping ALWAYS wins over the classifier's guess when a Lei
+    number is present in the query: Haiku tends to parse "Lei 15.270/2025"
+    as "PL 15270/2025", which is wrong (the PL that *became* that lei
+    is PL 1087/2025). The curated map is the source of truth here.
     """
-    if intent.bill_type and intent.bill_number and intent.bill_year:
-        return intent
     lei = extract_lei_number(query or "")
     if not lei:
         return intent
@@ -74,7 +75,9 @@ def apply_lei_overrides(query: str, intent: ClassifyResult) -> ClassifyResult:
         return intent
     btype, bnumber, byear = mapped
     logger.info(
-        "apply_lei_overrides: lei=%s → %s %d/%d", lei, btype, bnumber, byear,
+        "apply_lei_overrides: lei=%s → %s %d/%d (was %s %s/%s)",
+        lei, btype, bnumber, byear,
+        intent.bill_type, intent.bill_number, intent.bill_year,
     )
     return replace(
         intent,
