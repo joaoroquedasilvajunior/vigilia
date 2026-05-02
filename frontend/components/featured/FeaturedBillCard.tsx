@@ -63,6 +63,24 @@ function RiskBadge({ score }: { score: number | null | undefined }) {
   );
 }
 
+// Use the Câmara status string as the source of truth for whether a bill
+// was approved or rejected — derived "nao > sim" doesn't work for PECs
+// voted across multiple turns where we keep only the last per-deputy vote
+// (often an against-vote on a destaque, not on the bill itself). PEC
+// 45/2019 (Reforma Tributária) is the canonical case: 159/346 recorded
+// but status = "Transformado em Norma Jurídica".
+function statusOutcome(status: string | null | undefined): "approved" | "rejected" | "pending" {
+  if (!status) return "pending";
+  const s = status.toLowerCase();
+  if (s.includes("transformad") || s.includes("aprovad") || s.includes("promulgad") || s.includes("sancionad")) {
+    return "approved";
+  }
+  if (s.includes("rejeit") || s.includes("arquiv")) {
+    return "rejected";
+  }
+  return "pending";
+}
+
 function VoteBar({ bill }: { bill: FeaturedBill }) {
   const sim = bill.votes_sim ?? 0;
   const nao = bill.votes_nao ?? 0;
@@ -80,18 +98,27 @@ function VoteBar({ bill }: { bill: FeaturedBill }) {
   const simPct = (sim / total) * 100;
   const naoPct = (nao / total) * 100;
   const abstPct = (abst / total) * 100;
-  const rejected = nao > sim;
+  const outcome = statusOutcome(bill.status);
+  // Visual mismatch: status says approved but the recorded last-vote is
+  // não-dominant (multi-turn PEC artifact). Show a note so the bar isn't
+  // misleading.
+  const showCaveat = outcome === "approved" && nao > sim;
 
   return (
     <div>
-      {/* Header row: section label + optional rejection badge */}
+      {/* Header row: section label + status badge */}
       <div className="flex items-center justify-between mb-1.5">
         <p className="text-[10px] font-display font-bold text-text-warm uppercase tracking-wider">
           Votação no plenário
         </p>
-        {rejected && (
+        {outcome === "rejected" && (
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-bold uppercase tracking-wider">
             Rejeitada
+          </span>
+        )}
+        {outcome === "approved" && (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-bold uppercase tracking-wider">
+            Aprovada
           </span>
         )}
       </div>
@@ -133,6 +160,12 @@ function VoteBar({ bill }: { bill: FeaturedBill }) {
           </>
         )}
       </p>
+
+      {showCaveat && (
+        <p className="mt-1 text-[10px] text-text-warm/80 italic leading-snug">
+          Aprovada em votação multi-turno; placar mostra o último voto registrado por deputado.
+        </p>
+      )}
     </div>
   );
 }
