@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { getStats } from "@/lib/api";
+import { getStats, getFeaturedBills, type FeaturedBill } from "@/lib/api";
+import FeaturedBillCard from "@/components/featured/FeaturedBillCard";
 
 // Always render with fresh stats — the homepage is the public face
 export const dynamic = "force-dynamic";
@@ -7,6 +8,54 @@ export const dynamic = "force-dynamic";
 function fmtBR(n: number): string {
   return new Intl.NumberFormat("pt-BR").format(n);
 }
+
+// Editorial overlay for the homepage "Em Destaque" section.
+// camara_ids are confirmed (commit 52828aa); labels/descriptions are
+// short, neutral, journalist-readable.
+const FEATURED_BILLS = [
+  {
+    camara_id: 2358548,
+    label: "Dosimetria — 8 de Janeiro",
+    description:
+      "Altera penas dos condenados pelos ataques às sedes dos Três Poderes",
+    theme: "reforma-politica",
+  },
+  {
+    camara_id: 2487436,
+    label: "Isenção IR até R$ 5.000",
+    description:
+      "Zera imposto de renda para quem ganha até R$ 5 mil por mês",
+    theme: "tributacao",
+  },
+  {
+    camara_id: 2430143,
+    label: "Reforma Tributária — IBS e CBS",
+    description:
+      "Regulamenta o novo sistema tributário sobre consumo aprovado em 2023",
+    theme: "tributacao",
+  },
+  {
+    camara_id: 2270800,
+    label: "PEC da Blindagem",
+    description:
+      "Proposta que ampliava imunidades parlamentares — rejeitada pelo plenário",
+    theme: "reforma-politica",
+  },
+  {
+    camara_id: 2374540,
+    label: "Limites ao STF",
+    description:
+      "Restringe decisões monocráticas dos ministros do Supremo",
+    theme: "reforma-politica",
+  },
+  {
+    camara_id: 2196833,
+    label: "Reforma Tributária — PEC 45",
+    description:
+      "Reestruturou o sistema tributário nacional — aprovada em 2023",
+    theme: "tributacao",
+  },
+] as const;
 
 // ── Pillar icons ─────────────────────────────────────────────────────────────
 // Inline SVGs in the Brasília Modernist tradition: thin geometric strokes,
@@ -114,13 +163,18 @@ const PILLARS = [
 ];
 
 export default async function HomePage() {
-  // Live stats; fall back gracefully if backend is briefly unavailable
+  // Live stats + featured bills in parallel; either failing falls back gracefully.
+  const camaraIds = FEATURED_BILLS.map((f) => f.camara_id);
   let stats = { legislators: 0, bills: 0, votes: 0, clusters: 0 };
-  try {
-    stats = await getStats();
-  } catch {
-    /* ignore */
-  }
+  let featuredItems: FeaturedBill[] = [];
+  const [statsRes, featRes] = await Promise.all([
+    getStats().catch(() => null),
+    getFeaturedBills(camaraIds).catch(() => null),
+  ]);
+  if (statsRes) stats = statsRes;
+  if (featRes) featuredItems = featRes.items;
+  // Index by camara_id so we can stitch with the editorial overlay below.
+  const byId = new Map(featuredItems.map((b) => [b.camara_id, b]));
 
   return (
     <main>
@@ -187,6 +241,42 @@ export default async function HomePage() {
               </span>{" "}
               Coalizões
             </span>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Em Destaque ──────────────────────────────────────────────────── */}
+      <section className="bg-concreto">
+        <div className="max-w-6xl mx-auto px-4 py-16">
+          <div className="mb-10 text-center">
+            <h2 className="font-display text-3xl sm:text-4xl font-bold text-brasilia">
+              Em Destaque
+            </h2>
+            <p className="mt-3 text-text-warm max-w-2xl mx-auto">
+              Votações que marcaram o debate público recente —
+              veja como cada deputado votou.
+            </p>
+            <p className="mt-1 text-xs text-text-warm/80">
+              Atualizado com dados da Câmara dos Deputados.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {FEATURED_BILLS.map((entry) => {
+              const bill = byId.get(entry.camara_id);
+              // Skip silently if backend doesn't know this camara_id — keeps
+              // the homepage tidy when the bill ingestion is still catching up.
+              if (!bill || bill.not_in_db) return null;
+              return (
+                <FeaturedBillCard
+                  key={entry.camara_id}
+                  bill={bill}
+                  label={entry.label}
+                  description={entry.description}
+                  theme={entry.theme}
+                />
+              );
+            })}
           </div>
         </div>
       </section>

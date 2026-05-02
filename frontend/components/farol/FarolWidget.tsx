@@ -130,8 +130,25 @@ export default function FarolWidget() {
     if (open) setTimeout(() => inputRef.current?.focus(), 50);
   }, [open]);
 
-  async function send() {
-    const text = input.trim();
+  // Listen for cross-tree "ask Farol" requests dispatched by other components
+  // (e.g. Featured-bill cards on the homepage). Opens the widget and submits
+  // the supplied query immediately — no manual input needed.
+  useEffect(() => {
+    function handler(e: Event) {
+      const ce = e as CustomEvent<{ query?: string }>;
+      const q = ce.detail?.query;
+      if (!q) return;
+      setOpen(true);
+      // Defer until the panel renders so the typing indicator is visible.
+      setTimeout(() => send(q), 60);
+    }
+    window.addEventListener("farol-ask", handler as EventListener);
+    return () => window.removeEventListener("farol-ask", handler as EventListener);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function send(override?: string) {
+    const text = (override ?? input).trim();
     if (!text || loading) return;
 
     const userMsg: UserMessage = { role: "user", content: text };
@@ -303,7 +320,7 @@ export default function FarolWidget() {
               maxLength={400}
             />
             <button
-              onClick={send}
+              onClick={() => send()}
               disabled={loading || !input.trim()}
               className="px-3 py-2 bg-cerrado text-ipe rounded-xl hover:brightness-110 disabled:opacity-40 transition-all active:scale-95"
               aria-label="Enviar"

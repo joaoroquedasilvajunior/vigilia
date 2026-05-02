@@ -2,7 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
@@ -47,6 +47,52 @@ async def list_bills(
         "page_size": page_size,
         "items": [_serialize_bill(b) for b in bills],
     }
+
+
+@router.get("/featured")
+async def featured_bills(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    ids: str = Query(..., description="Comma-separated camara_ids"),
+):
+    """
+    Bulk fetch for the homepage "Em Destaque" section. Returns each
+    bill plus a vote breakdown in a single SQL query — avoids the
+    6-roundtrip pattern the frontend would otherwise need.
+
+    Items are returned in the same order as the requested ids.
+    Missing bills appear with {"camara_id": N, "not_in_db": True}.
+    """
+    camara_ids = [int(x.strip()) for x in ids.split(",") if x.strip().isdigit()]
+    if not camara_ids:
+        return {"items": []}
+
+    rows = (await db.execute(text("""
+        SELECT
+            b.id, b.camara_id, b.type, b.number, b.year,
+            b.title, b.status,
+            b.const_risk_score, b.theme_tags,
+            COUNT(v.id) FILTER (WHERE v.vote_value = 'sim')        AS votes_sim,
+            COUNT(v.id) FILTER (WHERE v.vote_value = 'não')        AS votes_nao,
+            COUNT(v.id) FILTER (WHERE v.vote_value = 'abstencao')  AS votes_abstencao,
+            COUNT(v.id) FILTER (WHERE v.vote_value = 'obstrucao')  AS votes_obstrucao,
+            COUNT(v.id) FILTER (WHERE v.vote_value = 'ausente')    AS votes_ausente,
+            COUNT(v.id)                                             AS votes_total
+        FROM bills b
+        LEFT JOIN votes v ON v.bill_id = b.id
+        WHERE b.camara_id = ANY(:ids)
+        GROUP BY b.id
+    """), {"ids": camara_ids})).all()
+    by_id = {r.camara_id: dict(r._mapping) for r in rows}
+
+    items = []
+    for cid in camara_ids:
+        if cid in by_id:
+            d = by_id[cid]
+            d["id"] = str(d["id"])
+            items.append(d)
+        else:
+            items.append({"camara_id": cid, "not_in_db": True})
+    return {"items": items}
 
 
 @router.get("/{bill_id}")

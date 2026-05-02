@@ -190,6 +190,30 @@ export const getBills = (params?: {
 
 export const getBill = (id: string) => apiFetch<Bill>(`/bills/${id}`);
 
+export interface FeaturedBill {
+  id?: string;
+  camara_id: number;
+  type?: string | null;
+  number?: number;
+  year?: number;
+  title?: string | null;
+  status?: string | null;
+  const_risk_score?: number | null;
+  theme_tags?: string[] | null;
+  votes_sim?: number;
+  votes_nao?: number;
+  votes_abstencao?: number;
+  votes_obstrucao?: number;
+  votes_ausente?: number;
+  votes_total?: number;
+  not_in_db?: boolean;
+}
+
+export const getFeaturedBills = (camaraIds: number[]) =>
+  apiFetch<{ items: FeaturedBill[] }>(
+    `/bills/featured?ids=${camaraIds.join(",")}`,
+  );
+
 // Stats (homepage hero)
 export interface SiteStats {
   legislators: number;
