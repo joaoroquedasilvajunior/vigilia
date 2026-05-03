@@ -97,14 +97,23 @@ app.include_router(stats.router, prefix="/api/v1")
 app.include_router(analysis.router, prefix="/api/v1")
 
 
+async def _post_startup_migrations() -> None:
+    """Runs DDL and backfill *without blocking* the startup hook.
+    Critical: must NOT touch the DB on cold-start while the previous
+    container's sync workers are still draining Supabase connections —
+    that's what was bouncing the healthcheck."""
+    # Wait briefly so the server starts answering /health before we
+    # contend for any Supabase resources.
+    await asyncio.sleep(5)
+    await _run_fast_startup_ddl()
+    await _background_last_vote_at_backfill()
+
+
 @app.on_event("startup")
 async def _startup() -> None:
-    # 1) Fast DDL synchronously so every other endpoint can rely on the
-    #    column existing (~hundreds of ms even over the Atlantic).
-    await _run_fast_startup_ddl()
-    # 2) Heavy backfill spawned and detached. asyncio.create_task lets
-    #    the startup hook return immediately so /health responds in time.
-    asyncio.create_task(_background_last_vote_at_backfill())
+    # Keep this hook synchronously-empty so /health is reachable
+    # immediately. All DB-touching work is fire-and-forget.
+    asyncio.create_task(_post_startup_migrations())
 
 
 @app.get("/health")
