@@ -129,6 +129,11 @@ async def sync_recent_bills(days_back: int = 7) -> None:
                         set_={
                             "status": bill_data.get("status"),
                             "title": bill_data["title"] or "",
+                            # urgency_regime was previously omitted from the
+                            # update set — so even after _normalize_bill
+                            # learned to read it from the API, existing rows
+                            # never got the new value. Now propagated.
+                            "urgency_regime": bill_data.get("urgency_regime", False),
                             "updated_at": datetime.now(),
                         },
                     )
