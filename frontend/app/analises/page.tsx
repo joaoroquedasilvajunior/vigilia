@@ -3,15 +3,45 @@ import type { Metadata } from "next";
 import {
   getDisciplineAlignmentScatter,
   getDonorVoteHeatmap,
+  getSimilarVoters,
   getStateProfiles,
   getStats,
   type DonorVoteHeatmap,
   type ScatterPoint,
+  type SimilarVoter,
   type StateProfile,
 } from "@/lib/api";
 import ScatterDisciplineAlignment from "@/components/analises/ScatterDisciplineAlignment";
 import DonorVoteHeatmapView from "@/components/analises/DonorVoteHeatmap";
 import StateMap from "@/components/analises/StateMap";
+import SimilarVotersExamples, {
+  type ExampleResult,
+} from "@/components/analises/SimilarVotersExamples";
+
+// Hand-picked exemplars for the "exemplo ao vivo" section. Chosen to span
+// the political spectrum (PSOL · PSB · PL) and party sizes; updating an
+// entry just means swapping the UUID — names/parties/states come from the
+// API. UUIDs verified against /api/v1/legislators search.
+const SIMILAR_EXAMPLES = [
+  {
+    id: "f0a233d2-5145-4f77-9316-f938c5030cb1",
+    name: "Guilherme Boulos",
+    party: "PSOL",
+    state: "SP",
+  },
+  {
+    id: "ec0db6b9-feaf-406f-af52-fb083a408be8",
+    name: "Tabata Amaral",
+    party: "PSB",
+    state: "SP",
+  },
+  {
+    id: "2138dfb1-ea48-4471-8716-88e8e2a70546",
+    name: "Nikolas Ferreira",
+    party: "PL",
+    state: "MG",
+  },
+] as const;
 
 export const metadata: Metadata = {
   title: "Análises",
@@ -27,20 +57,32 @@ function fmtBR(n: number): string {
 }
 
 export default async function AnalisesPage() {
-  const [scatterRes, heatmapRes, statesRes, statsRes] = await Promise.all([
-    getDisciplineAlignmentScatter().catch(() => ({
-      items: [] as ScatterPoint[],
-      total: 0,
-    })),
-    getDonorVoteHeatmap().catch(
-      () => ({ sectors: [], themes: [], cells: [] }) as DonorVoteHeatmap,
-    ),
-    getStateProfiles().catch(() => ({
-      items: [] as StateProfile[],
-      total: 0,
-    })),
-    getStats().catch(() => null),
-  ]);
+  const [scatterRes, heatmapRes, statesRes, similarResults, statsRes] =
+    await Promise.all([
+      getDisciplineAlignmentScatter().catch(() => ({
+        items: [] as ScatterPoint[],
+        total: 0,
+      })),
+      getDonorVoteHeatmap().catch(
+        () => ({ sectors: [], themes: [], cells: [] }) as DonorVoteHeatmap,
+      ),
+      getStateProfiles().catch(() => ({
+        items: [] as StateProfile[],
+        total: 0,
+      })),
+      // Pull top similar voters for each example deputy in parallel. A failed
+      // fetch for one deputy returns an empty match list — the component
+      // hides empty examples cleanly rather than rendering a stub card.
+      Promise.all(
+        SIMILAR_EXAMPLES.map(async (d) => {
+          const r = await getSimilarVoters(d.id).catch(
+            () => ({ items: [] as SimilarVoter[] }),
+          );
+          return { deputy: d, matches: r.items.slice(0, 3) } as ExampleResult;
+        }),
+      ),
+      getStats().catch(() => null),
+    ]);
 
   const points = scatterRes.items;
   const totalVotes = statsRes?.votes ?? 0;
@@ -213,21 +255,10 @@ export default async function AnalisesPage() {
             </p>
           </header>
 
-          <article className="bg-white rounded-lg border border-concreto-shadow border-l-[4px] border-l-cerrado p-5 sm:p-6 max-w-3xl">
-            <p className="text-sm text-brasilia leading-relaxed">
-              Esta análise vive no perfil de cada deputado. Procure qualquer
-              parlamentar para descobrir com quem ele <em>realmente</em> vota,
-              independentemente da legenda.
-            </p>
-            <div className="mt-4">
-              <Link
-                href="/deputados"
-                className="inline-flex items-center gap-2 text-sm font-semibold text-cerrado hover:text-ochre transition-colors"
-              >
-                Buscar deputado →
-              </Link>
-            </div>
-          </article>
+          <p className="-mt-2 mb-5 text-[10px] font-display font-bold text-text-warm uppercase tracking-widest">
+            Exemplo ao vivo
+          </p>
+          <SimilarVotersExamples examples={similarResults} />
         </section>
 
         {/* ── Section separator ────────────────────────────────────── */}
