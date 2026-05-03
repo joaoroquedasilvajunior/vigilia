@@ -169,6 +169,23 @@ export interface LegislatorDonors {
 export const getLegislatorDonors = (id: string) =>
   apiFetch<LegislatorDonors>(`/legislators/${id}/donors`);
 
+export interface SimilarVoter {
+  id: string;
+  name: string;
+  state_uf: string | null;
+  photo_url: string | null;
+  party: string | null;
+  cluster_id: string | null;
+  cluster_label: string | null;
+  similarity_pct: number | null;
+  shared_votes: number;
+  agreements: number;
+}
+export const getSimilarVoters = (id: string) =>
+  apiFetch<{ legislator_id: string; items: SimilarVoter[]; count: number }>(
+    `/legislators/${id}/similar-voters`,
+  );
+
 // Bills
 export const getBills = (params?: {
   type?: string;

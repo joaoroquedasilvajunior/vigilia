@@ -312,6 +312,100 @@ async def get_legislator_donors(
     }
 
 
+# ── Similar voters ─────────────────────────────────────────────────────────
+# For each *other* deputy who voted on at least 10 of the same bills as the
+# target, compute agreement rate. Cross-party only — same-party agreement is
+# the expected baseline; cross-party agreement is the journalistic finding.
+#
+# We exclude same-party deputies in SQL (with a NULL-safe predicate so that
+# a target deputy with no party still gets a full result set instead of an
+# empty one). LIMIT 10 in SQL because there are only ~640 candidates and
+# the JOIN is bounded by the target's vote count.
+
+_SIMILAR_VOTERS_SQL = text("""
+WITH target_party AS (
+    SELECT p.acronym AS party
+    FROM legislators l
+    LEFT JOIN parties p ON l.nominal_party_id = p.id
+    WHERE l.id = :legislator_id
+),
+target_votes AS (
+    SELECT bill_id, vote_value
+    FROM votes
+    WHERE legislator_id = :legislator_id
+      AND vote_value IS NOT NULL
+),
+comparisons AS (
+    SELECT
+        v.legislator_id AS other_id,
+        COUNT(*) FILTER (WHERE v.vote_value = tv.vote_value) AS agreements,
+        COUNT(*)                                              AS total_shared
+    FROM votes v
+    JOIN target_votes tv ON v.bill_id = tv.bill_id
+    WHERE v.legislator_id != :legislator_id
+      AND v.vote_value IS NOT NULL
+    GROUP BY v.legislator_id
+    HAVING COUNT(*) >= 10
+)
+SELECT
+    c.agreements,
+    c.total_shared,
+    ROUND(c.agreements::numeric / NULLIF(c.total_shared, 0) * 100, 1) AS similarity_pct,
+    l.id::text                                AS id,
+    COALESCE(l.display_name, l.name)          AS name,
+    l.state_uf                                AS state_uf,
+    l.photo_url                               AS photo_url,
+    p.acronym                                 AS party,
+    bc.id::text                               AS cluster_id,
+    bc.label                                  AS cluster_label
+FROM comparisons c
+JOIN legislators l ON c.other_id = l.id
+LEFT JOIN parties p ON l.nominal_party_id = p.id
+LEFT JOIN behavioral_clusters bc ON l.behavioral_cluster_id = bc.id
+CROSS JOIN target_party tp
+-- Exclude same party. NULL-safe: if either side is NULL we keep the row.
+WHERE (p.acronym IS DISTINCT FROM tp.party) OR tp.party IS NULL
+ORDER BY similarity_pct DESC, c.total_shared DESC
+LIMIT 10
+""")
+
+
+@router.get("/{legislator_id}/similar-voters")
+async def get_similar_voters(
+    legislator_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Top 10 deputies (from *other* parties) whose voting record most closely
+    matches this deputy's. Useful to surface coalition behavior that crosses
+    formal party lines — the journalistic question "who actually votes
+    together?"
+    """
+    rows = (
+        await db.execute(_SIMILAR_VOTERS_SQL, {"legislator_id": legislator_id})
+    ).mappings().all()
+
+    return {
+        "legislator_id": str(legislator_id),
+        "items": [
+            {
+                "id":             r["id"],
+                "name":           r["name"],
+                "state_uf":       r["state_uf"],
+                "photo_url":      r["photo_url"],
+                "party":          r["party"],
+                "cluster_id":     r["cluster_id"],
+                "cluster_label":  r["cluster_label"],
+                "similarity_pct": float(r["similarity_pct"]) if r["similarity_pct"] is not None else None,
+                "shared_votes":   r["total_shared"],
+                "agreements":     r["agreements"],
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+    }
+
+
 def _serialize_legislator(
     l: Legislator,
     p: Party | None = None,

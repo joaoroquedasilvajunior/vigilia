@@ -4,12 +4,15 @@ import {
   getLegislatorVotes,
   getClusters,
   getLegislatorDonors,
+  getSimilarVoters,
   type LegislatorDonors,
   type DonorBucket,
   type DonorSector,
   type NamedDonor,
   type SectorVoteCorrelation,
+  type SimilarVoter,
 } from "@/lib/api";
+import SimilarVoters from "@/components/deputados/SimilarVoters";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 
@@ -440,13 +443,20 @@ export default async function DeputadoProfilePage({
   const { id } = await params;
 
   let legislator, votesData, clustersData, donorsData: LegislatorDonors | null;
+  let similarVoters: SimilarVoter[] = [];
   try {
-    [legislator, votesData, clustersData, donorsData] = await Promise.all([
+    const [leg, vd, cd, dd, sv] = await Promise.all([
       getLegislator(id),
       getLegislatorVotes(id, 1),
       getClusters().catch(() => ({ clusters: [] })),
       getLegislatorDonors(id).catch(() => null),
+      getSimilarVoters(id).catch(() => ({ items: [] as SimilarVoter[] })),
     ]);
+    legislator = leg;
+    votesData = vd;
+    clustersData = cd;
+    donorsData = dd;
+    similarVoters = sv.items;
   } catch {
     notFound();
   }
@@ -634,6 +644,14 @@ export default async function DeputadoProfilePage({
           )}
         </div>
       </section>
+
+      {/* Similar voters — cross-party agreement signals */}
+      <SimilarVoters
+        voters={similarVoters}
+        targetName={legislator.display_name ?? legislator.name}
+        targetParty={legislator.party_acronym}
+        targetClusterId={legislator.behavioral_cluster_id}
+      />
     </main>
   );
 }

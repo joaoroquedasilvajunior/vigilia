@@ -181,6 +181,48 @@ export default async function AnalisesPage() {
           </p>
         </section>
 
+        {/* ── Section separator ────────────────────────────────────── */}
+        <div className="mt-14 mb-10 flex items-center gap-4" aria-hidden>
+          <span className="h-px flex-1 bg-ochre/40" />
+          <span className="font-display text-xs uppercase tracking-widest text-ochre font-bold">
+            ✦
+          </span>
+          <span className="h-px flex-1 bg-ochre/40" />
+        </div>
+
+        {/* ── Visualization 3: lives on deputy profiles, teaser here ─ */}
+        <section>
+          <header className="mb-6 max-w-3xl">
+            <p className="font-display text-xs uppercase tracking-widest text-ochre font-bold">
+              Análise · 3 de 8
+            </p>
+            <h2 className="font-display text-2xl sm:text-3xl font-bold text-brasilia mt-2 leading-tight">
+              Quem vota com quem
+            </h2>
+            <p className="mt-3 text-text-warm leading-relaxed">
+              Para cada deputado, identificamos os 10 parlamentares de outros
+              partidos com padrão de voto mais parecido — revelando coalizões
+              reais que cruzam fronteiras partidárias.
+            </p>
+          </header>
+
+          <article className="bg-white rounded-lg border border-concreto-shadow border-l-[4px] border-l-cerrado p-5 sm:p-6 max-w-3xl">
+            <p className="text-sm text-brasilia leading-relaxed">
+              Esta análise vive no perfil de cada deputado. Procure qualquer
+              parlamentar para descobrir com quem ele <em>realmente</em> vota,
+              independentemente da legenda.
+            </p>
+            <div className="mt-4">
+              <Link
+                href="/deputados"
+                className="inline-flex items-center gap-2 text-sm font-semibold text-cerrado hover:text-ochre transition-colors"
+              >
+                Buscar deputado →
+              </Link>
+            </div>
+          </article>
+        </section>
+
         {/* ── Future visualizations placeholder ────────────────────── */}
         <section className="mt-14 text-center text-text-warm">
           <p className="text-sm">
