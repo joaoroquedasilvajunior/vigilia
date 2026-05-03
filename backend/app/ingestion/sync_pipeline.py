@@ -10,7 +10,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete as sa_delete, select
+from sqlalchemy import delete as sa_delete, select, text as sa_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db import AsyncSessionLocal
@@ -251,6 +251,17 @@ async def sync_votes_for_bill(bill_camara_id: int) -> None:
                     },
                 )
                 await db.execute(stmt)
+
+            # Refresh denormalized last_vote_at so the activity dashboard
+            # ("Termômetro do Congresso") sees this bill as recently active.
+            await db.execute(
+                sa_text(
+                    "UPDATE bills SET last_vote_at = "
+                    "(SELECT MAX(voted_at) FROM votes WHERE bill_id = :bid) "
+                    "WHERE id = :bid"
+                ),
+                {"bid": bill.id},
+            )
 
             await db.commit()
 

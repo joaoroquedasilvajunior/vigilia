@@ -561,10 +561,14 @@ async def party_cohesion(db: Annotated[AsyncSession, Depends(get_db)]):
 # the wrong numbers. Decompose into independent scalar subqueries via four
 # separate small queries; cheap and correct.
 
+# "Active" detection uses bills.last_vote_at (denormalized MAX(voted_at)) —
+# bills.updated_at is touched on every nightly sync of metadata, so it would
+# light up every row in the table as "active" regardless of legislative
+# action. last_vote_at only changes when an actual roll-call lands.
 _TEMP_SCALARS_SQL = text("""
 SELECT
     (SELECT COUNT(*) FROM bills
-     WHERE updated_at > NOW() - INTERVAL '30 days')                AS bills_active_30d,
+     WHERE last_vote_at > NOW() - INTERVAL '30 days')               AS bills_active_30d,
     (SELECT COUNT(*) FROM bills
      WHERE urgency_regime = TRUE
        AND status ILIKE '%tramita%')                                AS bills_in_urgency_now,
@@ -588,14 +592,11 @@ SELECT
     b.const_risk_score                        AS const_risk_score,
     b.urgency_regime                          AS urgency_regime,
     b.status                                  AS status,
-    COUNT(v.id)                               AS vote_count,
-    MAX(v.voted_at)                           AS last_vote
+    (SELECT COUNT(*) FROM votes v WHERE v.bill_id = b.id) AS vote_count,
+    b.last_vote_at                            AS last_vote
 FROM bills b
-JOIN votes v ON v.bill_id = b.id
-WHERE v.voted_at > NOW() - INTERVAL '90 days'
-GROUP BY b.id, b.type, b.number, b.year, b.title,
-         b.const_risk_score, b.urgency_regime, b.status
-ORDER BY MAX(v.voted_at) DESC NULLS LAST
+WHERE b.last_vote_at IS NOT NULL
+ORDER BY b.last_vote_at DESC
 LIMIT 5
 """)
 

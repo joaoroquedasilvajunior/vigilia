@@ -428,6 +428,16 @@ class CamaraClient:
         }
 
     def _normalize_bill(self, raw: dict) -> dict:
+        # urgency_regime: derived from statusProposicao.regime, which on the
+        # detail endpoint contains strings like "Urgência", "Urgência (Art.
+        # 155, RICD)", "Prioridade" or "Especial". List endpoint may omit
+        # this field — falls back to False, will be filled in on the next
+        # detail-fetch round.
+        status_proposicao = raw.get("statusProposicao") or {}
+        regime = (status_proposicao.get("regime") or "").lower()
+        urgency_regime = any(
+            w in regime for w in ("urgência", "urgencia", "prioridade")
+        )
         return {
             "camara_id": raw.get("id"),
             "type": raw.get("siglaTipo"),
@@ -435,9 +445,9 @@ class CamaraClient:
             "year": raw.get("ano"),
             "title": raw.get("ementa") or "",
             "summary_official": raw.get("ementa"),
-            "status": (raw.get("statusProposicao") or {}).get("descricaoSituacao"),
+            "status": status_proposicao.get("descricaoSituacao"),
             "presentation_date": raw.get("dataApresentacao"),
-            "urgency_regime": False,
+            "urgency_regime": urgency_regime,
         }
 
     def _normalize_vote(self, tipo_voto: str | None) -> str:

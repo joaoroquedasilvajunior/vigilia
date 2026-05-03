@@ -25,6 +25,11 @@ class Bill(Base):
     author_type: Mapped[str | None] = mapped_column(String(20), default="legislator")
     presentation_date: Mapped[date | None] = mapped_column(Date)
     final_vote_date: Mapped[date | None] = mapped_column(Date)
+    # last_vote_at = MAX(votes.voted_at) for this bill. Maintained by the
+    # ingestion pipeline (and the one-shot backfill SQL) so the activity
+    # dashboards have a real "recently active" signal — bills.updated_at
+    # is touched on every nightly sync and can't be used for that purpose.
+    last_vote_at: Mapped[datetime | None] = mapped_column(DateTime)
     const_risk_score: Mapped[float | None] = mapped_column(Float)
     media_coverage_score: Mapped[int] = mapped_column(Integer, default=0)
     theme_tags: Mapped[list[str] | None] = mapped_column(ARRAY(String))
