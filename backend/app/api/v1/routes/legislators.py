@@ -345,7 +345,12 @@ comparisons AS (
     WHERE v.legislator_id != :legislator_id
       AND v.vote_value IS NOT NULL
     GROUP BY v.legislator_id
-    HAVING COUNT(*) >= 10
+    -- 30 shared votes minimum: 10 was the spec'd floor, but post-deploy
+    -- audit showed it surfaced 100% matches with only 10 votes in common
+    -- (e.g. Nikolas × Soldado Noelio at 100/10) — clean by chance, not by
+    -- behavior. 30 is the smallest threshold that consistently produces
+    -- statistically meaningful similarity rates.
+    HAVING COUNT(*) >= 30
 )
 SELECT
     c.agreements,

@@ -164,7 +164,7 @@ export default function SimilarVoters({
 
       <p className="mt-3 text-[11px] text-text-warm/80 max-w-2xl">
         Similaridade calculada sobre todas as votações em que ambos os deputados
-        participaram (mínimo de 10 em comum). Apenas deputados de outros partidos
+        participaram (mínimo de 30 em comum). Apenas deputados de outros partidos
         — alinhamento dentro do mesmo partido é o esperado.
       </p>
     </section>
