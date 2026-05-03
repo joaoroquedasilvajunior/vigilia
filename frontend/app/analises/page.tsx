@@ -122,7 +122,7 @@ export default async function AnalisesPage() {
         bills_in_urgency_now: 0,
         high_risk_in_progress: 0,
         avg_discipline_now: null,
-        votes_last_30d: 0,
+        total_votes: 0,
         active_coalitions: 0,
         recent_bills: [],
       }) as PoliticalTemperatureResponse,

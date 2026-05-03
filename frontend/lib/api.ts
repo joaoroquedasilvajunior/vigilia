@@ -386,7 +386,7 @@ export interface PoliticalTemperatureResponse {
   bills_in_urgency_now: number;
   high_risk_in_progress: number;
   avg_discipline_now: number | null;
-  votes_last_30d: number;
+  total_votes: number;
   active_coalitions: number;
   recent_bills: RecentBill[];
 }

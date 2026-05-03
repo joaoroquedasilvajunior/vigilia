@@ -124,9 +124,9 @@ export default function PoliticalTemperature({
         />
         <StatTile
           emoji="📊"
-          label="Votos / 30 dias"
-          value={fmtBR(data.votes_last_30d)}
-          caption="atividade parlamentar"
+          label="Total de votos"
+          value={fmtBR(data.total_votes)}
+          caption="votos nominais registrados"
           bg="bg-white"
         />
         <StatTile

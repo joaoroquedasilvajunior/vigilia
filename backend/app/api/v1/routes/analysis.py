@@ -577,8 +577,10 @@ SELECT
        AND status ILIKE '%tramita%')                                AS high_risk_in_progress,
     (SELECT AVG(party_discipline_score) FROM legislators
      WHERE party_discipline_score IS NOT NULL)                      AS avg_discipline_now,
-    (SELECT COUNT(*) FROM votes
-     WHERE voted_at > NOW() - INTERVAL '30 days')                   AS votes_last_30d,
+    -- Was votes_last_30d but voted_at is sparse on historical rows; the
+    -- 30-day window often returned 0 even when the dataset is healthy.
+    -- total_votes is always meaningful and grows as new sessions come in.
+    (SELECT COUNT(*) FROM votes)                                    AS total_votes,
     (SELECT COUNT(*) FROM behavioral_clusters)                      AS active_coalitions
 """)
 
@@ -614,7 +616,7 @@ async def political_temperature(db: Annotated[AsyncSession, Depends(get_db)]):
         "bills_in_urgency_now": scalars["bills_in_urgency_now"],
         "high_risk_in_progress": scalars["high_risk_in_progress"],
         "avg_discipline_now":   float(scalars["avg_discipline_now"]) if scalars["avg_discipline_now"] is not None else None,
-        "votes_last_30d":       scalars["votes_last_30d"],
+        "total_votes":          scalars["total_votes"],
         "active_coalitions":    scalars["active_coalitions"],
         "recent_bills": [
             {
