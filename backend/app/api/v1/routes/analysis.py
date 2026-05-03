@@ -112,7 +112,13 @@ cells AS (
     FROM donor_deputies dd
     JOIN themed_votes tv ON dd.legislator_id = tv.legislator_id
     GROUP BY dd.sector_group, tv.theme
+    -- Both gates: enough votes (statistical signal) AND enough distinct
+    -- deputies (so a single prolific voter can't dominate a cell). Without
+    -- the deputy floor, "religioso" surfaced 90% sim rates that were
+    -- actually one deputy's individual voting record projected onto the
+    -- whole sector.
     HAVING COUNT(*) > 10
+       AND COUNT(DISTINCT dd.legislator_id) >= 3
 )
 SELECT
     sector_group,
