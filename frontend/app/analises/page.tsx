@@ -2,10 +2,13 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import {
   getDisciplineAlignmentScatter,
+  getDonorVoteHeatmap,
   getStats,
+  type DonorVoteHeatmap,
   type ScatterPoint,
 } from "@/lib/api";
 import ScatterDisciplineAlignment from "@/components/analises/ScatterDisciplineAlignment";
+import DonorVoteHeatmapView from "@/components/analises/DonorVoteHeatmap";
 
 export const metadata: Metadata = {
   title: "Análises",
@@ -21,11 +24,14 @@ function fmtBR(n: number): string {
 }
 
 export default async function AnalisesPage() {
-  const [scatterRes, statsRes] = await Promise.all([
+  const [scatterRes, heatmapRes, statsRes] = await Promise.all([
     getDisciplineAlignmentScatter().catch(() => ({
       items: [] as ScatterPoint[],
       total: 0,
     })),
+    getDonorVoteHeatmap().catch(
+      () => ({ sectors: [], themes: [], cells: [] }) as DonorVoteHeatmap,
+    ),
     getStats().catch(() => null),
   ]);
 
@@ -120,14 +126,69 @@ export default async function AnalisesPage() {
           </ul>
         </section>
 
+        {/* ── Section separator ────────────────────────────────────── */}
+        <div className="mt-14 mb-10 flex items-center gap-4" aria-hidden>
+          <span className="h-px flex-1 bg-ochre/40" />
+          <span className="font-display text-xs uppercase tracking-widest text-ochre font-bold">
+            ✦
+          </span>
+          <span className="h-px flex-1 bg-ochre/40" />
+        </div>
+
+        {/* ── Visualization 2: donor × theme heatmap ───────────────── */}
+        <section>
+          <header className="mb-6 max-w-3xl">
+            <p className="font-display text-xs uppercase tracking-widest text-ochre font-bold">
+              Análise · 2 de 8
+            </p>
+            <h2 className="font-display text-2xl sm:text-3xl font-bold text-brasilia mt-2 leading-tight">
+              Financiadores e Votações
+            </h2>
+            <p className="mt-3 text-text-warm leading-relaxed">
+              Como deputados financiados por cada setor econômico votam em
+              projetos relacionados a esse setor.
+            </p>
+            <p className="mt-4 text-sm text-text-warm leading-relaxed bg-concreto-shadow/50 rounded-md p-3 border-l-[3px] border-l-ochre">
+              Este mapa mostra, para cada cruzamento setor × tema, a proporção
+              de votos &quot;sim&quot; entre os deputados que receberam doações
+              corporativas daquele setor, em projetos categorizados naquele
+              tema. Uma célula verde escura indica voto majoritariamente a
+              favor. <strong>Não prova causalidade</strong> — mas indica
+              correlação que merece atenção pública.
+            </p>
+          </header>
+
+          {heatmapRes.sectors.length === 0 ? (
+            <div className="bg-white rounded-lg border border-concreto-shadow p-8 text-center">
+              <p className="text-text-warm">
+                Mapa de doadores × temas indisponível.
+              </p>
+              <p className="text-xs text-text-warm/70 mt-2">
+                Verifique se as tarefas de classificação de doadores e
+                tagueamento de projetos foram executadas.
+              </p>
+            </div>
+          ) : (
+            <DonorVoteHeatmapView data={heatmapRes} />
+          )}
+
+          <p className="mt-4 text-[11px] text-text-warm/80 leading-relaxed max-w-3xl">
+            Dados de financiamento referentes às eleições de 2022 (TSE).
+            Apenas doações de pessoas jurídicas classificadas por setor —
+            número limitado de doadores corporativos devido à legislação
+            pós-2015 que vetou doações de empresas a campanhas. Cada célula
+            exige no mínimo 10 votos para ser exibida.
+          </p>
+        </section>
+
         {/* ── Future visualizations placeholder ────────────────────── */}
-        <section className="mt-12 text-center text-text-warm">
+        <section className="mt-14 text-center text-text-warm">
           <p className="text-sm">
             Próximas visualizações em desenvolvimento:
           </p>
           <p className="text-xs mt-2">
-            doadores · ausência · coesão partidária · risco constitucional ·
-            fluxo de votos · mapa de calor · timeline
+            ausência · coesão partidária · risco constitucional · fluxo de
+            votos · timeline · perfil regional
           </p>
         </section>
       </div>

@@ -247,3 +247,21 @@ export const getDisciplineAlignmentScatter = () =>
   apiFetch<{ items: ScatterPoint[]; total: number }>(
     `/analysis/scatter-discipline-alignment`,
   );
+
+export interface HeatmapCell {
+  sector: string;
+  theme: string;
+  sim: number;
+  nao: number;
+  total: number;
+  deputies: number;
+  pct_sim: number | null;
+}
+export interface DonorVoteHeatmap {
+  sectors: string[];
+  themes: string[];
+  cells: HeatmapCell[];
+}
+
+export const getDonorVoteHeatmap = () =>
+  apiFetch<DonorVoteHeatmap>(`/analysis/donor-vote-heatmap`);
