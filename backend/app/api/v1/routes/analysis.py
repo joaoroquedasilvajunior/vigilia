@@ -182,3 +182,167 @@ async def donor_vote_heatmap(
         "themes":  themes,
         "cells":   cells,
     }
+
+
+# ── State profiles (UF map) ──────────────────────────────────────────────────
+# Per-state breakdown for the Brazil-tile-grid map. Combines:
+#   - deputy distribution across behavioral clusters
+#   - averaged behavioral indicators (const alignment, discipline, absence)
+#   - top-5 deputies per UF (by const_alignment_score, NULLs last)
+#   - party list per UF
+# Returned in a single denormalized payload so the client doesn't need to
+# refetch when the user clicks a state.
+
+_STATE_CLUSTER_SQL = text("""
+SELECT
+    l.state_uf                          AS uf,
+    bc.id::text                          AS cluster_id,
+    bc.label                             AS cluster_label,
+    COUNT(l.id)                          AS deputy_count,
+    AVG(l.const_alignment_score)         AS avg_const,
+    AVG(l.party_discipline_score)        AS avg_discipline,
+    AVG(l.absence_rate)                  AS avg_absence
+FROM legislators l
+LEFT JOIN behavioral_clusters bc ON l.behavioral_cluster_id = bc.id
+WHERE l.state_uf IS NOT NULL
+GROUP BY l.state_uf, bc.id, bc.label
+ORDER BY l.state_uf, deputy_count DESC
+""")
+
+_STATE_PARTIES_SQL = text("""
+SELECT l.state_uf AS uf, ARRAY_AGG(DISTINCT p.acronym) FILTER (WHERE p.acronym IS NOT NULL) AS parties
+FROM legislators l
+LEFT JOIN parties p ON l.nominal_party_id = p.id
+WHERE l.state_uf IS NOT NULL
+GROUP BY l.state_uf
+""")
+
+_STATE_TOP_DEPUTIES_SQL = text("""
+SELECT uf, id, name, photo_url, party, cluster_label, const_alignment_score
+FROM (
+    SELECT
+        l.state_uf                                AS uf,
+        l.id::text                                AS id,
+        COALESCE(l.display_name, l.name)          AS name,
+        l.photo_url                               AS photo_url,
+        p.acronym                                 AS party,
+        bc.label                                  AS cluster_label,
+        l.const_alignment_score                   AS const_alignment_score,
+        ROW_NUMBER() OVER (
+            PARTITION BY l.state_uf
+            ORDER BY l.const_alignment_score DESC NULLS LAST,
+                     COALESCE(l.display_name, l.name)
+        ) AS rn
+    FROM legislators l
+    LEFT JOIN parties p ON l.nominal_party_id = p.id
+    LEFT JOIN behavioral_clusters bc ON l.behavioral_cluster_id = bc.id
+    WHERE l.state_uf IS NOT NULL
+) sub
+WHERE rn <= 5
+ORDER BY uf, rn
+""")
+
+
+@router.get("/state-profiles")
+async def state_profiles(db: Annotated[AsyncSession, Depends(get_db)]):
+    """
+    Per-UF aggregation for the Brazil map. Returns one row per state
+    with cluster distribution, averaged scores, party list, and top-5
+    deputies (by constitutional alignment).
+
+    The "dominant cluster" is the one with the largest deputy count;
+    if the largest is < 40% of the state's delegation we mark the
+    state as "mixed" so it doesn't get falsely attributed.
+    """
+    cluster_rows = (await db.execute(_STATE_CLUSTER_SQL)).mappings().all()
+    party_rows   = (await db.execute(_STATE_PARTIES_SQL)).mappings().all()
+    top_rows     = (await db.execute(_STATE_TOP_DEPUTIES_SQL)).mappings().all()
+
+    # Index parties by UF
+    parties_by_uf: dict[str, list[str]] = {
+        r["uf"]: list(r["parties"] or []) for r in party_rows
+    }
+    # Index top deputies by UF
+    top_by_uf: dict[str, list[dict]] = {}
+    for r in top_rows:
+        top_by_uf.setdefault(r["uf"], []).append({
+            "id":            r["id"],
+            "name":          r["name"],
+            "photo_url":     r["photo_url"],
+            "party":         r["party"],
+            "cluster_label": r["cluster_label"],
+            "const_alignment": (
+                float(r["const_alignment_score"])
+                if r["const_alignment_score"] is not None else None
+            ),
+        })
+
+    # Pivot cluster rows into per-UF aggregates
+    by_uf: dict[str, dict] = {}
+    for r in cluster_rows:
+        uf = r["uf"]
+        st = by_uf.setdefault(uf, {
+            "uf": uf,
+            "deputy_count": 0,
+            "clusters": [],         # ordered by deputy_count DESC
+            "const_sum": 0.0,
+            "const_n":   0,
+            "discipline_sum": 0.0,
+            "discipline_n":   0,
+            "absence_sum": 0.0,
+            "absence_n":   0,
+        })
+        n = r["deputy_count"]
+        st["deputy_count"] += n
+        st["clusters"].append({
+            "cluster_id":    r["cluster_id"],
+            "cluster_label": r["cluster_label"] or "Sem cluster",
+            "deputy_count":  n,
+        })
+        # Averages: weight per cluster's average by its count, then
+        # divide once at the end. This recovers the population mean
+        # (not a mean-of-means).
+        if r["avg_const"] is not None:
+            st["const_sum"] += float(r["avg_const"]) * n
+            st["const_n"]   += n
+        if r["avg_discipline"] is not None:
+            st["discipline_sum"] += float(r["avg_discipline"]) * n
+            st["discipline_n"]   += n
+        if r["avg_absence"] is not None:
+            st["absence_sum"] += float(r["avg_absence"]) * n
+            st["absence_n"]   += n
+
+    items: list[dict] = []
+    for uf, st in by_uf.items():
+        # Dominant cluster: top one if it commands ≥40% of the delegation.
+        # Sort first to be safe (cluster_rows already ordered, but explicit).
+        st["clusters"].sort(key=lambda c: -c["deputy_count"])
+        top = st["clusters"][0] if st["clusters"] else None
+        dominant: str | None = None
+        if top and st["deputy_count"] > 0:
+            share = top["deputy_count"] / st["deputy_count"]
+            if share >= 0.40 and top["cluster_label"] != "Sem cluster":
+                dominant = top["cluster_label"]
+            else:
+                dominant = "Misto"
+
+        items.append({
+            "uf":             uf,
+            "deputy_count":   st["deputy_count"],
+            "dominant_cluster": dominant,
+            "clusters":       st["clusters"],
+            "avg_const_alignment": (
+                st["const_sum"] / st["const_n"] if st["const_n"] else None
+            ),
+            "avg_discipline": (
+                st["discipline_sum"] / st["discipline_n"] if st["discipline_n"] else None
+            ),
+            "avg_absence": (
+                st["absence_sum"] / st["absence_n"] if st["absence_n"] else None
+            ),
+            "parties":        sorted(parties_by_uf.get(uf, [])),
+            "top_deputies":   top_by_uf.get(uf, []),
+        })
+
+    items.sort(key=lambda s: s["uf"])
+    return {"items": items, "total": len(items)}

@@ -3,12 +3,15 @@ import type { Metadata } from "next";
 import {
   getDisciplineAlignmentScatter,
   getDonorVoteHeatmap,
+  getStateProfiles,
   getStats,
   type DonorVoteHeatmap,
   type ScatterPoint,
+  type StateProfile,
 } from "@/lib/api";
 import ScatterDisciplineAlignment from "@/components/analises/ScatterDisciplineAlignment";
 import DonorVoteHeatmapView from "@/components/analises/DonorVoteHeatmap";
+import StateMap from "@/components/analises/StateMap";
 
 export const metadata: Metadata = {
   title: "Análises",
@@ -24,7 +27,7 @@ function fmtBR(n: number): string {
 }
 
 export default async function AnalisesPage() {
-  const [scatterRes, heatmapRes, statsRes] = await Promise.all([
+  const [scatterRes, heatmapRes, statesRes, statsRes] = await Promise.all([
     getDisciplineAlignmentScatter().catch(() => ({
       items: [] as ScatterPoint[],
       total: 0,
@@ -32,6 +35,10 @@ export default async function AnalisesPage() {
     getDonorVoteHeatmap().catch(
       () => ({ sectors: [], themes: [], cells: [] }) as DonorVoteHeatmap,
     ),
+    getStateProfiles().catch(() => ({
+      items: [] as StateProfile[],
+      total: 0,
+    })),
     getStats().catch(() => null),
   ]);
 
@@ -223,14 +230,57 @@ export default async function AnalisesPage() {
           </article>
         </section>
 
+        {/* ── Section separator ────────────────────────────────────── */}
+        <div className="mt-14 mb-10 flex items-center gap-4" aria-hidden>
+          <span className="h-px flex-1 bg-ochre/40" />
+          <span className="font-display text-xs uppercase tracking-widest text-ochre font-bold">
+            ✦
+          </span>
+          <span className="h-px flex-1 bg-ochre/40" />
+        </div>
+
+        {/* ── Visualization 4: Brazil tile-grid map ────────────────── */}
+        <section>
+          <header className="mb-6 max-w-3xl">
+            <p className="font-display text-xs uppercase tracking-widest text-ochre font-bold">
+              Análise · 4 de 8
+            </p>
+            <h2 className="font-display text-2xl sm:text-3xl font-bold text-brasilia mt-2 leading-tight">
+              Como seu estado vota
+            </h2>
+            <p className="mt-3 text-text-warm leading-relaxed">
+              Distribuição das coalizões comportamentais por estado — baseada
+              em votações reais, não em filiação partidária. Cada quadrado é
+              uma unidade federativa, colorido pela coalizão dominante.
+            </p>
+          </header>
+
+          {statesRes.items.length === 0 ? (
+            <div className="bg-white rounded-lg border border-concreto-shadow p-8 text-center">
+              <p className="text-text-warm">
+                Dados por estado indisponíveis no momento.
+              </p>
+            </div>
+          ) : (
+            <StateMap profiles={statesRes.items} />
+          )}
+
+          <p className="mt-4 text-[11px] text-text-warm/80 leading-relaxed max-w-3xl">
+            Mapa em formato de grade (cada UF tem o mesmo peso visual,
+            independentemente da área geográfica). Estado com cluster
+            &quot;Misto&quot; significa que nenhuma coalizão concentra 40% ou
+            mais da delegação. Médias calculadas sobre os deputados com score
+            disponível.
+          </p>
+        </section>
+
         {/* ── Future visualizations placeholder ────────────────────── */}
         <section className="mt-14 text-center text-text-warm">
           <p className="text-sm">
             Próximas visualizações em desenvolvimento:
           </p>
           <p className="text-xs mt-2">
-            ausência · coesão partidária · risco constitucional · fluxo de
-            votos · timeline · perfil regional
+            ausência · coesão partidária · risco constitucional · timeline
           </p>
         </section>
       </div>

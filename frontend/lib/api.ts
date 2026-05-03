@@ -282,3 +282,31 @@ export interface DonorVoteHeatmap {
 
 export const getDonorVoteHeatmap = () =>
   apiFetch<DonorVoteHeatmap>(`/analysis/donor-vote-heatmap`);
+
+export interface StateClusterCount {
+  cluster_id: string | null;
+  cluster_label: string;
+  deputy_count: number;
+}
+export interface StateTopDeputy {
+  id: string;
+  name: string;
+  photo_url: string | null;
+  party: string | null;
+  cluster_label: string | null;
+  const_alignment: number | null;
+}
+export interface StateProfile {
+  uf: string;
+  deputy_count: number;
+  dominant_cluster: string | null;  // "Misto" if no cluster ≥ 40%
+  clusters: StateClusterCount[];
+  avg_const_alignment: number | null;
+  avg_discipline: number | null;
+  avg_absence: number | null;
+  parties: string[];
+  top_deputies: StateTopDeputy[];
+}
+
+export const getStateProfiles = () =>
+  apiFetch<{ items: StateProfile[]; total: number }>(`/analysis/state-profiles`);
