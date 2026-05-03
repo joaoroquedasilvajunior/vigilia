@@ -644,3 +644,76 @@ async def backfill_urgency_for_voted_bills() -> dict:
     }
     logger.info("backfill_urgency_for_voted_bills: %s", result)
     return result
+
+
+async def backfill_voted_at_for_voted_bills(rate_seconds: float = 2.0) -> dict:
+    """
+    One-shot backfill: re-ingest principal votes for every bill that has
+    votes recorded but a NULL last_vote_at. Drives the new voted_at
+    fallback through sync_votes_for_bill_principal so historical votes
+    stop showing as "no timestamp".
+
+    Designed to survive deploy interruptions:
+      - The candidate query filters on last_vote_at IS NULL, so any bill
+        already processed before the previous run died is automatically
+        skipped on retrigger.
+      - Each bill is its own transaction inside sync_votes_for_bill_principal
+        — partial progress persists.
+
+    Rate-limited to ~1 bill per `rate_seconds` (default 2s) to avoid
+    exhausting Câmara API quota over the long run. ~333 candidates × 2s
+    ≈ 11 min when starting from scratch; subsequent runs are O(remaining).
+    """
+    logger.info("backfill_voted_at_for_voted_bills: starting")
+    async with AsyncSessionLocal() as db:
+        rows = (
+            await db.execute(
+                sa_text(
+                    "SELECT DISTINCT b.camara_id "
+                    "FROM bills b JOIN votes v ON v.bill_id = b.id "
+                    "WHERE b.camara_id IS NOT NULL "
+                    "  AND b.last_vote_at IS NULL"
+                )
+            )
+        ).all()
+    camara_ids = [r[0] for r in rows]
+    logger.info(
+        "backfill_voted_at_for_voted_bills: %d bills missing last_vote_at",
+        len(camara_ids),
+    )
+
+    updated = 0
+    failed = 0
+    for cid in camara_ids:
+        try:
+            await sync_votes_for_bill_principal(cid)
+            updated += 1
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            logger.warning("backfill_voted_at: %s failed — %s", cid, exc)
+        # Spacing between bills, not after the last one
+        await asyncio.sleep(rate_seconds)
+
+    # Tally how much of the table now has timestamps so the caller can
+    # see real progress in the response.
+    async with AsyncSessionLocal() as db:
+        try:
+            voted_total = (await db.execute(sa_text(
+                "SELECT COUNT(*) FROM votes WHERE voted_at IS NOT NULL"
+            ))).scalar() or 0
+            bills_dated = (await db.execute(sa_text(
+                "SELECT COUNT(*) FROM bills WHERE last_vote_at IS NOT NULL"
+            ))).scalar() or 0
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("backfill_voted_at: tally failed — %s", exc)
+            voted_total = bills_dated = 0
+
+    result = {
+        "candidates":              len(camara_ids),
+        "updated":                 updated,
+        "failed":                  failed,
+        "votes_with_voted_at":     int(voted_total),
+        "bills_with_last_vote_at": int(bills_dated),
+    }
+    logger.info("backfill_voted_at_for_voted_bills: %s", result)
+    return result

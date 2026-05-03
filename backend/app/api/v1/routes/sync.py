@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.ingestion.sync_pipeline import (
     backfill_urgency_for_voted_bills,
+    backfill_voted_at_for_voted_bills,
     sync_all_voted_bills,
     sync_high_profile_bills_votes,
     sync_legislators,
@@ -254,6 +255,34 @@ async def trigger_fix_principal_votes(
         "job": "sync_votes_principal_for_bills",
         "n_bills": len(req.camara_ids),
         "camara_ids": req.camara_ids,
+    }
+
+
+@router.post("/backfill-voted-at")
+async def trigger_backfill_voted_at(
+    background_tasks: BackgroundTasks,
+    _: Annotated[None, Depends(_verify_secret)],
+):
+    """
+    One-shot backfill: re-syncs every bill that has votes but a NULL
+    last_vote_at, driving the new voted_at fallback through
+    sync_votes_for_bill_principal so historical votes get their session
+    timestamp populated.
+
+    Idempotent and resumable — survives deploy interruptions because
+    each bill is its own transaction and the candidate query filters on
+    last_vote_at IS NULL, so completed bills are skipped on retrigger.
+
+    Estimated runtime: ~333 bills × 2s/bill ≈ 11 min on a fresh run;
+    O(remaining) on subsequent triggers.
+    """
+    background_tasks.add_task(backfill_voted_at_for_voted_bills)
+    return {
+        "status": "queued",
+        "job": "backfill_voted_at_for_voted_bills",
+        "estimated_bills": 333,
+        "estimated_minutes": 11,
+        "resumable": True,
     }
 
 
