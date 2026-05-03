@@ -178,6 +178,10 @@ async def _fetch_and_upsert_bill(client: "CamaraClient", db: "AsyncSession", cam
         set_={
             "status": bill_data.get("status"),
             "title": bill_data["title"] or "",
+            # Same fix as sync_recent_bills' on_conflict — without this,
+            # backfill via the detail endpoint can't propagate the
+            # corrected urgency_regime to existing rows.
+            "urgency_regime": bill_data.get("urgency_regime", False),
             "updated_at": datetime.now(),
         },
     )
@@ -229,7 +233,15 @@ async def sync_votes_for_bill(bill_camara_id: int) -> None:
                     )
                     sess = sess_result.scalar_one_or_none()
                     if not sess:
-                        sess = Session(camara_id=v["session_camara_id"], session_date=datetime.now().date())
+                        # Use the actual Câmara session date when available
+                        # (camara_client now passes it on each vote dict);
+                        # fall back to today only if the API gave us nothing.
+                        sd_raw = v.get("session_date")
+                        sd = _parse_date(sd_raw[:10] if isinstance(sd_raw, str) else sd_raw) or datetime.now().date()
+                        sess = Session(
+                            camara_id=v["session_camara_id"],
+                            session_date=sd,
+                        )
                         db.add(sess)
                         await db.flush()
                     session_id = sess.id
@@ -332,9 +344,12 @@ async def sync_votes_for_bill_principal(bill_camara_id: int) -> dict:
                     )
                     sess = sess_result.scalar_one_or_none()
                     if not sess:
+                        # See note in sync_votes_for_bill — same fallback chain.
+                        sd_raw = v.get("session_date")
+                        sd = _parse_date(sd_raw[:10] if isinstance(sd_raw, str) else sd_raw) or datetime.now().date()
                         sess = Session(
                             camara_id=v["session_camara_id"],
-                            session_date=datetime.now().date(),
+                            session_date=sd,
                         )
                         db.add(sess)
                         await db.flush()
@@ -558,3 +573,74 @@ if __name__ == "__main__":
         print("Sync complete.")
 
     asyncio.run(_main())
+
+
+async def backfill_urgency_for_voted_bills() -> dict:
+    """
+    One-shot backfill: for every bill that has at least one vote AND whose
+    urgency_regime is currently False or NULL, re-fetch the proposição via
+    the Câmara DETAIL endpoint (/proposicoes/{id}) so that
+    statusProposicao.regime is parsed and the corrected urgency_regime
+    propagates through on_conflict_do_update.
+
+    The Câmara LIST endpoint (used by sync_recent_bills) doesn't return
+    statusProposicao at all, so existing rows ingested via the normal path
+    have urgency_regime=False regardless of what the API actually says.
+    This walk-and-refetch closes that gap.
+
+    Rate-limited to ~1 req/sec (CamaraClient's built-in throttle plus an
+    extra 0.4s pad to be polite). ~333 voted bills × ~1.4s ≈ 7 min for the
+    full set; smaller in practice once previously-fetched bills already
+    have urgency=true.
+    """
+    from app.models import Vote  # local import — already used elsewhere
+
+    logger.info("backfill_urgency_for_voted_bills: starting")
+    async with AsyncSessionLocal() as db:
+        rows = (
+            await db.execute(
+                sa_text(
+                    "SELECT DISTINCT b.camara_id "
+                    "FROM bills b JOIN votes v ON v.bill_id = b.id "
+                    "WHERE b.camara_id IS NOT NULL "
+                    "  AND (b.urgency_regime IS NULL OR b.urgency_regime = FALSE)"
+                )
+            )
+        ).all()
+    camara_ids = [r[0] for r in rows]
+    logger.info("backfill_urgency_for_voted_bills: %d bills to refetch", len(camara_ids))
+
+    updated = 0
+    failed = 0
+    flipped_to_true = 0
+    async with CamaraClient() as client:
+        async with AsyncSessionLocal() as db:
+            for cid in camara_ids:
+                try:
+                    await _fetch_and_upsert_bill(client, db, cid)
+                    updated += 1
+                    # Brief politeness pause beyond the client's throttle
+                    await asyncio.sleep(0.4)
+                except Exception as exc:  # noqa: BLE001
+                    failed += 1
+                    logger.warning("backfill_urgency: %s failed — %s", cid, exc)
+            # Count how many ended up urgent so we can report a useful number
+            try:
+                row = (await db.execute(sa_text(
+                    "SELECT COUNT(*) FROM bills "
+                    "WHERE urgency_regime = TRUE AND id IN ("
+                    "  SELECT DISTINCT bill_id FROM votes"
+                    ")"
+                ))).first()
+                flipped_to_true = int(row[0]) if row else 0
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("backfill_urgency: tally failed — %s", exc)
+
+    result = {
+        "candidates":  len(camara_ids),
+        "updated":     updated,
+        "failed":      failed,
+        "voted_bills_now_urgent": flipped_to_true,
+    }
+    logger.info("backfill_urgency_for_voted_bills: %s", result)
+    return result

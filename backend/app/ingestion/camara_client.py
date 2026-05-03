@@ -300,6 +300,7 @@ class CamaraClient:
         sessions_data = await self._get(f"/proposicoes/{camara_bill_id}/votacoes")
         votes: list[dict] = []
         for session in sessions_data.get("dados", []):
+            session_date = self._session_date(session)
             session_votes = await self._get(f"/votacoes/{session['id']}/votos")
             for v in session_votes.get("dados", []):
                 votes.append({
@@ -307,7 +308,12 @@ class CamaraClient:
                     "vote_value": self._normalize_vote(v.get("tipoVoto")),
                     "party_orientation": self._normalize_orientation(v.get("orientacaoVoto")),
                     "session_camara_id": session["id"],
-                    "voted_at": v.get("dataHoraVoto"),
+                    # Per-vote dataHoraVoto is rarely populated by the Câmara
+                    # API. Fall back to the parent session's timestamp so
+                    # downstream consumers (last_vote_at, dashboards) get a
+                    # real timestamp instead of NULL.
+                    "voted_at": v.get("dataHoraVoto") or session_date,
+                    "session_date": session_date,
                 })
         return votes
 
@@ -388,13 +394,17 @@ class CamaraClient:
             return [], meta
 
         votes: list[dict] = []
+        chosen_date = self._session_date(chosen)
         for v in chosen_rows:
             votes.append({
                 "legislator_camara_id": v.get("deputado_", {}).get("id"),
                 "vote_value": self._normalize_vote(v.get("tipoVoto")),
                 "party_orientation": self._normalize_orientation(v.get("orientacaoVoto")),
                 "session_camara_id": chosen["id"],
-                "voted_at": v.get("dataHoraVoto"),
+                # Same rationale as get_votes_for_bill: dataHoraVoto is
+                # almost never populated; fall back to the session's date.
+                "voted_at": v.get("dataHoraVoto") or chosen_date,
+                "session_date": chosen_date,
             })
         return votes, meta
 
@@ -449,6 +459,24 @@ class CamaraClient:
             "presentation_date": raw.get("dataApresentacao"),
             "urgency_regime": urgency_regime,
         }
+
+    @staticmethod
+    def _session_date(session: dict) -> str | None:
+        """
+        Best-effort extract the timestamp of a /votacoes session row.
+        Câmara fields, in order of preference:
+          - dataHoraRegistro: full ISO timestamp ("2023-07-07T01:53:40")
+          - dataHoraInicio:   start time, only on some sessions
+          - data:             date-only ("2023-07-06")
+        Returned as the raw string; callers parse with their existing
+        datetime-coercion logic (asyncpg accepts both date and datetime
+        strings into a TIMESTAMP column).
+        """
+        return (
+            session.get("dataHoraRegistro")
+            or session.get("dataHoraInicio")
+            or session.get("data")
+        )
 
     def _normalize_vote(self, tipo_voto: str | None) -> str:
         return {

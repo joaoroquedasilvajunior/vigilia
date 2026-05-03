@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.ingestion.sync_pipeline import (
+    backfill_urgency_for_voted_bills,
     sync_all_voted_bills,
     sync_high_profile_bills_votes,
     sync_legislators,
@@ -253,6 +254,28 @@ async def trigger_fix_principal_votes(
         "job": "sync_votes_principal_for_bills",
         "n_bills": len(req.camara_ids),
         "camara_ids": req.camara_ids,
+    }
+
+
+@router.post("/backfill-urgency")
+async def trigger_backfill_urgency(
+    background_tasks: BackgroundTasks,
+    _: Annotated[None, Depends(_verify_secret)],
+):
+    """
+    One-shot backfill of urgency_regime for every bill that has votes.
+    The Câmara LIST endpoint omits statusProposicao entirely, so existing
+    rows ingested via sync_recent_bills carry urgency_regime=false even
+    when reality says otherwise. This walks every voted bill and refetches
+    via the DETAIL endpoint, where regime is populated. Runtime ≈ 5-8 min
+    at the conservative ~1.4s/bill pace.
+    """
+    background_tasks.add_task(backfill_urgency_for_voted_bills)
+    return {
+        "status": "queued",
+        "job": "backfill_urgency_for_voted_bills",
+        "estimated_bills": 333,
+        "estimated_minutes": 8,
     }
 
 
