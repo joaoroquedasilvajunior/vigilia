@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import re
 import time
 from datetime import datetime, timedelta
 from typing import AsyncGenerator
@@ -10,6 +11,94 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from app.core.config import settings
 
 BASE_URL = settings.camara_api_base_url
+
+
+# ── Voting-session classification ─────────────────────────────────────────────
+# Câmara returns one bill's `/votacoes` as a flat list of sessions covering the
+# texto-base, every destaque, every emenda, sometimes procedural (urgência /
+# requerimento) votes. Aggregating across all of them yields a misleading
+# "placar" — typically the destaques drown out the principal vote. We classify
+# each session by its descricao and prefer principal sessions when available.
+#
+# Order matters: destaque is checked first because some destaque descriptions
+# also mention "projeto" (e.g. "Destaque do PT para suprimir art. 2º do
+# projeto") — we never want those to slip into the principal bucket.
+# Procedural sessions are votes about *how* to vote, not on the bill itself
+# (urgency motions, breaking the interstício between turns, recursos against
+# rulings, etc). They commonly mention "segundo turno" inside the requerimento
+# text, which is why we need to filter them out *before* checking principal.
+_PROCEDURAL_KEYWORDS = (
+    "requerimento", "recurso",
+    "interstício", "intersticio",
+    "questão de ordem", "questao de ordem",
+    "urgência (art", "urgencia (art",   # "Aprovado o Requerimento de Urgência"
+)
+
+# Destaques and supressive emendas — votes on parts of a text, not the text.
+# Bare "emenda" is intentionally NOT here: PEC titles ("Proposta de Emenda à
+# Constituição") would false-match. "Subemenda" alone isn't here either —
+# "Subemenda Substitutiva Global" is often the principal vote.
+_DESTAQUE_KEYWORDS = (
+    "supressão", "supressao",
+    "mantido o texto",
+    "suprimido o texto",
+    "emenda supressiva",
+    "subemenda supressiva",
+    "emenda aglutinativa",        # almost always destaque-style
+    "emenda de plenário", "emenda de plenario",
+)
+# Stricter destaque patterns: bare "destaque" false-matches the standard
+# Câmara phrasing "ressalvados os destaques" that appears in *principal*
+# vote descriptions. We require destaque to either start the descricao
+# or be followed by "para"/"do"/"da" (the natural way of naming a destaque).
+_DESTAQUE_PATTERNS = tuple(
+    re.compile(p, re.IGNORECASE) for p in (
+        r"^\s*destaque\b",
+        r"\bdestaque\s+(?:para|d[oae]s?|apresentad[oa])\b",
+        r"\bvota[cç][aã]o\s+do\s+destaque\b",
+    )
+)
+
+# Principal patterns — these are the only ways the actual approval of the
+# bill itself is phrased in Câmara descricao fields. Strict on purpose.
+_PRINCIPAL_PATTERNS = tuple(
+    re.compile(p, re.IGNORECASE) for p in (
+        r"\baprovad[oa]\s+o\s+projeto\b",
+        r"\baprovad[oa]\s+a\s+proposta\s+de\s+emenda\b",
+        r"\baprovad[oa]\s+o\s+substitutivo\b",
+        r"\baprovad[oa]\s+a\s+subemenda\s+substitutiva\b",
+        r"\baprovad[oa]\s+a\s+reda[cç][aã]o\s+final\b",
+        # "Aprovada, em segundo turno, a Proposta..."
+        r"\baprovad[oa],?\s+em\s+(?:primeiro|segundo|1[ºo]|2[ºo])\s+turno\b",
+        r"\baprovad[oa]\s+em\s+turno\s+[úu]nico\b",
+        # "Aprovado o texto-base" / "Texto-base aprovado"
+        r"\btexto[\s\-]base\b",
+        r"\baprova[cç][aã]o\s+do\s+projeto\b",
+    )
+)
+
+
+def classify_session(descricao: str | None) -> str:
+    """
+    Classify a Câmara voting session as one of:
+      - 'procedural' — requerimento, recurso, interstício
+      - 'destaque'   — destaque, mantido/suprimido o texto, emenda supressiva
+      - 'principal'  — actual approval of the bill itself
+      - 'outro'      — couldn't tell
+    Order matters: procedural beats destaque beats principal, because
+    procedural descriptions often quote turno phrases ("...para apreciação
+    em segundo turno") that would otherwise look principal.
+    """
+    if not descricao:
+        return "outro"
+    d = descricao.lower()
+    if any(k in d for k in _PROCEDURAL_KEYWORDS):
+        return "procedural"
+    if any(k in d for k in _DESTAQUE_KEYWORDS) or any(p.search(d) for p in _DESTAQUE_PATTERNS):
+        return "destaque"
+    if any(p.search(d) for p in _PRINCIPAL_PATTERNS):
+        return "principal"
+    return "outro"
 
 
 class CamaraClient:
@@ -221,6 +310,93 @@ class CamaraClient:
                     "voted_at": v.get("dataHoraVoto"),
                 })
         return votes
+
+    async def get_principal_votes_for_bill(
+        self, camara_bill_id: int,
+    ) -> tuple[list[dict], dict]:
+        """
+        Fetch votes from the bill's *principal* voting session only —
+        i.e. the texto-base / redação final / single-turn approval —
+        skipping destaques, emendas and procedural votes.
+
+        Selection rule:
+          1. Pick the most recent session classified as 'principal'
+             (Câmara returns sessions in date-DESC order, so the first
+             principal in the list is the final approval).
+          2. If no principal exists, fall back to the session with the
+             most individual votes recorded (proxy for "the one most
+             deputies showed up to").
+
+        Returns (votes, meta) where meta describes which session was
+        chosen and why — useful for logging / audits.
+        """
+        sessions_data = await self._get(f"/proposicoes/{camara_bill_id}/votacoes")
+        sessions = sessions_data.get("dados", []) or []
+        if not sessions:
+            return [], {
+                "chosen_session_id": None, "reason": "no-sessions",
+                "n_sessions": 0, "n_principal": 0,
+            }
+
+        classified = [(s, classify_session(s.get("descricao"))) for s in sessions]
+        principals = [s for s, t in classified if t == "principal"]
+
+        chosen: dict | None = None
+        chosen_rows: list[dict] = []
+        reason: str = ""
+
+        # First pass: walk principals (date-DESC → most-recent first) and pick
+        # the first one that actually has roll-call votes. "Redação Final"
+        # sessions are often by acclamation and have 0 individual votes — we
+        # need to keep walking back to the substantive turno vote.
+        for cand in principals:
+            sv = await self._get(f"/votacoes/{cand['id']}/votos")
+            rows = sv.get("dados", []) or []
+            if rows:
+                chosen, chosen_rows, reason = cand, rows, "principal"
+                break
+
+        # No principal had roll-call votes → pick the session with the most
+        # individual votes recorded. Ignores destaques only if a non-destaque
+        # candidate exists with at least as many votes.
+        if not chosen:
+            best_n = -1
+            best: dict | None = None
+            best_rows: list[dict] = []
+            best_type = "outro"
+            for s, t in classified:
+                sv = await self._get(f"/votacoes/{s['id']}/votos")
+                rows = sv.get("dados", []) or []
+                # Prefer non-destaque on ties.
+                better = (
+                    len(rows) > best_n
+                    or (len(rows) == best_n and best_type == "destaque" and t != "destaque")
+                )
+                if better:
+                    best_n, best, best_rows, best_type = len(rows), s, rows, t
+            chosen, chosen_rows = best, best_rows
+            reason = f"fallback-most-votes-{best_type}" if best else "no-votes"
+
+        meta = {
+            "chosen_session_id": chosen["id"] if chosen else None,
+            "chosen_descricao": (chosen or {}).get("descricao"),
+            "reason": reason,
+            "n_sessions": len(sessions),
+            "n_principal": len(principals),
+        }
+        if not chosen:
+            return [], meta
+
+        votes: list[dict] = []
+        for v in chosen_rows:
+            votes.append({
+                "legislator_camara_id": v.get("deputado_", {}).get("id"),
+                "vote_value": self._normalize_vote(v.get("tipoVoto")),
+                "party_orientation": self._normalize_orientation(v.get("orientacaoVoto")),
+                "session_camara_id": chosen["id"],
+                "voted_at": v.get("dataHoraVoto"),
+            })
+        return votes, meta
 
     # ── Normalization ───────────────────────────────────────────────────────
 

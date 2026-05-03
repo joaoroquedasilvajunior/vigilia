@@ -28,6 +28,9 @@ node_modules/
 # Supabase CLI temp files
 backend/supabase/.temp/
 
+# Audit script CSV output (regenerated; not source of truth)
+backend/scripts/output/
+
 # Vercel local config
 .vercel/
 

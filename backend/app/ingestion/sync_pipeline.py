@@ -10,7 +10,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db import AsyncSessionLocal
@@ -255,6 +255,125 @@ async def sync_votes_for_bill(bill_camara_id: int) -> None:
             await db.commit()
 
     logger.info("sync_votes_for_bill: done for bill camara_id=%d", bill_camara_id)
+
+
+async def sync_votes_for_bill_principal(bill_camara_id: int) -> dict:
+    """
+    Re-sync votes for a bill using ONLY its principal voting session
+    (texto-base / redação final / turno único). Wipes any pre-existing
+    votes for the bill first so stale destaque-derived rows can't
+    survive re-ingestion.
+
+    Returns a small dict describing what happened, suitable for logging
+    or batch-result aggregation.
+    """
+    logger.info("sync_votes_for_bill_principal: bill camara_id=%d", bill_camara_id)
+
+    async with CamaraClient() as client:
+        async with AsyncSessionLocal() as db:
+            bill_result = await db.execute(
+                select(Bill).where(Bill.camara_id == bill_camara_id)
+            )
+            bill = bill_result.scalar_one_or_none()
+            if not bill:
+                await _fetch_and_upsert_bill(client, db, bill_camara_id)
+                bill_result = await db.execute(
+                    select(Bill).where(Bill.camara_id == bill_camara_id)
+                )
+                bill = bill_result.scalar_one_or_none()
+            if not bill:
+                raise ValueError(
+                    f"Bill camara_id={bill_camara_id} could not be fetched from API"
+                )
+
+            votes, meta = await client.get_principal_votes_for_bill(bill_camara_id)
+
+            # Clear stale votes (very likely from destaque sessions) before
+            # repopulating from the principal session only.
+            deleted = (await db.execute(
+                sa_delete(Vote).where(Vote.bill_id == bill.id)
+            )).rowcount or 0
+
+            inserted = 0
+            for v in votes:
+                if not v.get("legislator_camara_id"):
+                    continue
+                leg_result = await db.execute(
+                    select(Legislator).where(
+                        Legislator.camara_id == v["legislator_camara_id"]
+                    )
+                )
+                legislator = leg_result.scalar_one_or_none()
+                if not legislator:
+                    continue
+
+                session_id = None
+                if v.get("session_camara_id"):
+                    sess_result = await db.execute(
+                        select(Session).where(
+                            Session.camara_id == v["session_camara_id"]
+                        )
+                    )
+                    sess = sess_result.scalar_one_or_none()
+                    if not sess:
+                        sess = Session(
+                            camara_id=v["session_camara_id"],
+                            session_date=datetime.now().date(),
+                        )
+                        db.add(sess)
+                        await db.flush()
+                    session_id = sess.id
+
+                followed = None
+                if v.get("party_orientation") not in ("livre", None):
+                    followed = v["vote_value"] == v["party_orientation"]
+
+                stmt = pg_insert(Vote).values(
+                    legislator_id=legislator.id,
+                    bill_id=bill.id,
+                    session_id=session_id,
+                    vote_value=v["vote_value"],
+                    party_orientation=v.get("party_orientation"),
+                    voted_at=v.get("voted_at"),
+                    followed_party_line=followed,
+                ).on_conflict_do_update(
+                    index_elements=["legislator_id", "bill_id"],
+                    set_={
+                        "vote_value": v["vote_value"],
+                        "party_orientation": v.get("party_orientation"),
+                        "voted_at": v.get("voted_at"),
+                        "followed_party_line": followed,
+                    },
+                )
+                await db.execute(stmt)
+                inserted += 1
+
+            await db.commit()
+
+    result = {
+        "camara_id": bill_camara_id,
+        "deleted": deleted,
+        "inserted": inserted,
+        **meta,
+    }
+    logger.info("sync_votes_for_bill_principal: %s", result)
+    return result
+
+
+async def sync_votes_principal_for_bills(camara_ids: list[int]) -> list[dict]:
+    """Run sync_votes_for_bill_principal sequentially over a list of bills.
+
+    Sequential (not gathered) to be polite to the Câmara API and to make
+    failures easier to attribute. Per-bill failures don't abort the batch.
+    """
+    results: list[dict] = []
+    for cid in camara_ids:
+        try:
+            results.append(await sync_votes_for_bill_principal(cid))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("sync_votes_for_bill_principal failed for %s", cid)
+            results.append({"camara_id": cid, "error": str(exc)})
+    return results
 
 
 # ── High-profile bills ────────────────────────────────────────────────────────

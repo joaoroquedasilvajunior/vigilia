@@ -5,6 +5,7 @@ In production these are called by GitHub Actions cron; guarded by a shared secre
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
+from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.ingestion.sync_pipeline import (
@@ -13,6 +14,7 @@ from app.ingestion.sync_pipeline import (
     sync_legislators,
     sync_recent_bills,
     sync_votes_for_bill,
+    sync_votes_principal_for_bills,
 )
 from app.analysis.clustering import compute_clusters
 from app.analysis.constitutional_scorer import run_constitutional_pipeline
@@ -225,6 +227,32 @@ async def trigger_sync_all_voted_bills(
         "job": "sync_all_voted_bills",
         "date_start": date_start,
         "date_end": date_end,
+    }
+
+
+class FixPrincipalReq(BaseModel):
+    camara_ids: list[int] = Field(..., min_length=1, max_length=100)
+
+
+@router.post("/votes/fix-principal")
+async def trigger_fix_principal_votes(
+    req: FixPrincipalReq,
+    background_tasks: BackgroundTasks,
+    _: Annotated[None, Depends(_verify_secret)],
+):
+    """
+    Re-sync the listed bills using ONLY their principal voting session
+    (texto-base / redação final / turno único). Wipes prior destaque-
+    derived votes for each bill before reinserting. Use this to repair
+    bills whose stored placar is misleading because the ingester picked
+    up destaques instead of the bill's own approval.
+    """
+    background_tasks.add_task(sync_votes_principal_for_bills, req.camara_ids)
+    return {
+        "status": "queued",
+        "job": "sync_votes_principal_for_bills",
+        "n_bills": len(req.camara_ids),
+        "camara_ids": req.camara_ids,
     }
 
 
