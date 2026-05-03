@@ -229,3 +229,21 @@ export const getClusters = () =>
 
 export const getClusterMembers = (clusterId: string) =>
   apiFetch<ClusterMembersResponse>(`/clusters/${clusterId}/members`);
+
+// Analysis (the /analises page)
+export interface ScatterPoint {
+  id: string;
+  name: string;
+  state_uf: string | null;
+  party: string | null;
+  cluster_id: string | null;
+  cluster_label: string | null;
+  discipline: number;        // 0..1
+  const_alignment: number;   // -1..+1
+  absence_rate: number | null;
+}
+
+export const getDisciplineAlignmentScatter = () =>
+  apiFetch<{ items: ScatterPoint[]; total: number }>(
+    `/analysis/scatter-discipline-alignment`,
+  );

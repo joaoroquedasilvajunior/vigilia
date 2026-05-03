@@ -82,6 +82,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/coalicoes" className="hover:text-ipe transition-colors">
                 Coalizões
               </Link>
+              <Link href="/analises" className="hover:text-ipe transition-colors">
+                Análises
+              </Link>
             </div>
           </div>
         </nav>
