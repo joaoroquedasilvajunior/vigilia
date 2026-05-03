@@ -310,3 +310,85 @@ export interface StateProfile {
 
 export const getStateProfiles = () =>
   apiFetch<{ items: StateProfile[]; total: number }>(`/analysis/state-profiles`);
+
+// Viz 5
+export interface ClusterRiskRow {
+  cluster_id: string;
+  cluster: string | null;
+  cohesion_score: number | null;
+  deputy_count: number;
+  avg_alignment: number | null;
+  bills_voted: number;
+  avg_bill_risk: number | null;
+  high_risk_bills_voted: number;
+  pct_yes_on_high_risk: number | null;
+}
+export const getConstitutionalRiskByCluster = () =>
+  apiFetch<{ items: ClusterRiskRow[]; total: number }>(
+    `/analysis/constitutional-risk-by-cluster`,
+  );
+
+// Viz 6
+export interface UrgencyAggregate {
+  bill_count: number;
+  avg_risk: number | null;
+  high_risk_count: number;
+  pct_high_risk: number | null;
+}
+export interface UrgencyHighRiskBill {
+  id: string;
+  type: string | null;
+  number: number | null;
+  year: number | null;
+  title: string;
+  const_risk_score: number | null;
+  status: string | null;
+}
+export interface UrgencyResponse {
+  without_urgency: UrgencyAggregate | null;
+  with_urgency: UrgencyAggregate | null;
+  risk_diff_pct: number | null;
+  high_risk_urgency_bills: UrgencyHighRiskBill[];
+}
+export const getUrgencyRegime = () =>
+  apiFetch<UrgencyResponse>(`/analysis/urgency-regime`);
+
+// Viz 7
+export interface PartyCohesionRow {
+  id: string;
+  acronym: string;
+  cohesion_score: number | null;
+  member_count: number;
+  avg_discipline: number | null;
+  avg_const_alignment: number | null;
+  clusters_present: string[];
+}
+export const getPartyCohesion = () =>
+  apiFetch<{ items: PartyCohesionRow[]; total: number }>(
+    `/analysis/party-cohesion`,
+  );
+
+// Viz 8
+export interface RecentBill {
+  id: string;
+  type: string | null;
+  number: number | null;
+  year: number | null;
+  title: string;
+  const_risk_score: number | null;
+  urgency_regime: boolean;
+  status: string | null;
+  vote_count: number;
+  last_vote: string | null;
+}
+export interface PoliticalTemperatureResponse {
+  bills_active_30d: number;
+  bills_in_urgency_now: number;
+  high_risk_in_progress: number;
+  avg_discipline_now: number | null;
+  votes_last_30d: number;
+  active_coalitions: number;
+  recent_bills: RecentBill[];
+}
+export const getPoliticalTemperature = () =>
+  apiFetch<PoliticalTemperatureResponse>(`/analysis/political-temperature`);

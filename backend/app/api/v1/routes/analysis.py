@@ -346,3 +346,288 @@ async def state_profiles(db: Annotated[AsyncSession, Depends(get_db)]):
 
     items.sort(key=lambda s: s["uf"])
     return {"items": items, "total": len(items)}
+
+
+# ── Constitutional risk by cluster (viz 5) ───────────────────────────────────
+# Per-cluster aggregation: how often each behavioral coalition voted "sim" on
+# bills our constitutional scorer flagged as high-risk (>0.6). Matters
+# because party affiliation is a poor predictor of constitutional posture
+# but cluster behavior is — a single number per cluster lets readers see
+# the divergence at a glance.
+
+_RISK_BY_CLUSTER_SQL = text("""
+SELECT
+    bc.id::text                                  AS cluster_id,
+    bc.label                                     AS cluster,
+    bc.cohesion_score                            AS cohesion_score,
+    COUNT(DISTINCT l.id)                         AS deputy_count,
+    AVG(l.const_alignment_score)                 AS avg_alignment,
+    COUNT(DISTINCT b.id)                         AS bills_voted,
+    AVG(b.const_risk_score)                      AS avg_bill_risk,
+    COUNT(DISTINCT b.id) FILTER (
+        WHERE b.const_risk_score > 0.6
+    )                                            AS high_risk_bills_voted,
+    -- pct sim votes ON the high-risk subset
+    ROUND(
+        COUNT(v.id) FILTER (
+            WHERE v.vote_value = 'sim' AND b.const_risk_score > 0.6
+        )::numeric
+        / NULLIF(COUNT(v.id) FILTER (
+            WHERE b.const_risk_score > 0.6
+        ), 0) * 100, 1
+    )                                            AS pct_yes_on_high_risk
+FROM behavioral_clusters bc
+JOIN legislators l ON l.behavioral_cluster_id = bc.id
+JOIN votes v ON v.legislator_id = l.id
+JOIN bills b ON v.bill_id = b.id
+WHERE b.const_risk_score IS NOT NULL
+  AND v.vote_value IN ('sim', 'não')
+GROUP BY bc.id, bc.label, bc.cohesion_score
+ORDER BY pct_yes_on_high_risk DESC NULLS LAST
+""")
+
+
+@router.get("/constitutional-risk-by-cluster")
+async def constitutional_risk_by_cluster(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Per-cluster aggregation of votes on constitutionally-risky bills."""
+    rows = (await db.execute(_RISK_BY_CLUSTER_SQL)).mappings().all()
+    return {
+        "items": [
+            {
+                "cluster_id":              r["cluster_id"],
+                "cluster":                 r["cluster"],
+                "cohesion_score":          r["cohesion_score"],
+                "deputy_count":            r["deputy_count"],
+                "avg_alignment":           float(r["avg_alignment"]) if r["avg_alignment"] is not None else None,
+                "bills_voted":             r["bills_voted"],
+                "avg_bill_risk":           float(r["avg_bill_risk"]) if r["avg_bill_risk"] is not None else None,
+                "high_risk_bills_voted":   r["high_risk_bills_voted"],
+                "pct_yes_on_high_risk":    float(r["pct_yes_on_high_risk"]) if r["pct_yes_on_high_risk"] is not None else None,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
+
+
+# ── Urgency regime (viz 6) ──────────────────────────────────────────────────
+# Compares bills that went through plenary under "regime de urgência" (which
+# truncates the analysis window) against bills that took the normal path.
+# Hypothesis the page tests: urgency correlates with higher constitutional
+# risk because there's less time to vet.
+
+_URGENCY_AGGREGATE_SQL = text("""
+SELECT
+    urgency_regime,
+    COUNT(*)                                                       AS bill_count,
+    AVG(const_risk_score)                                          AS avg_risk,
+    COUNT(*) FILTER (WHERE const_risk_score > 0.6)                 AS high_risk_count,
+    -- ratio of high-risk bills among voted ones
+    ROUND(
+        COUNT(*) FILTER (WHERE const_risk_score > 0.6)::numeric
+        / NULLIF(COUNT(*), 0) * 100, 1
+    )                                                              AS pct_high_risk
+FROM bills
+WHERE const_risk_score IS NOT NULL
+  AND id IN (SELECT DISTINCT bill_id FROM votes)
+GROUP BY urgency_regime
+""")
+
+_URGENCY_HIGH_RISK_BILLS_SQL = text("""
+SELECT
+    b.id::text                AS id,
+    b.type                    AS type,
+    b.number                  AS number,
+    b.year                    AS year,
+    b.title                   AS title,
+    b.const_risk_score        AS const_risk_score,
+    b.status                  AS status
+FROM bills b
+WHERE b.urgency_regime = TRUE
+  AND b.const_risk_score > 0.6
+  AND b.id IN (SELECT DISTINCT bill_id FROM votes)
+ORDER BY b.const_risk_score DESC NULLS LAST, b.year DESC
+LIMIT 10
+""")
+
+
+@router.get("/urgency-regime")
+async def urgency_regime(db: Annotated[AsyncSession, Depends(get_db)]):
+    """
+    Two-part return: (a) aggregated comparison between with/without urgency,
+    and (b) the worst high-risk urgency bills, for the right-side list.
+    """
+    agg = (await db.execute(_URGENCY_AGGREGATE_SQL)).mappings().all()
+    by_flag = {bool(r["urgency_regime"]): r for r in agg}
+
+    def pack(r):
+        if not r:
+            return None
+        return {
+            "bill_count":       r["bill_count"],
+            "avg_risk":         float(r["avg_risk"]) if r["avg_risk"] is not None else None,
+            "high_risk_count":  r["high_risk_count"],
+            "pct_high_risk":    float(r["pct_high_risk"]) if r["pct_high_risk"] is not None else None,
+        }
+
+    bills = (await db.execute(_URGENCY_HIGH_RISK_BILLS_SQL)).mappings().all()
+    high_risk_urgency_bills = [
+        {
+            "id":               r["id"],
+            "type":             r["type"],
+            "number":           r["number"],
+            "year":             r["year"],
+            "title":            r["title"],
+            "const_risk_score": float(r["const_risk_score"]) if r["const_risk_score"] is not None else None,
+            "status":           r["status"],
+        }
+        for r in bills
+    ]
+
+    normal = pack(by_flag.get(False))
+    urgent = pack(by_flag.get(True))
+
+    # Compute the % difference for the insight copy
+    risk_diff_pct = None
+    if normal and urgent and normal.get("avg_risk") and urgent.get("avg_risk"):
+        risk_diff_pct = round(
+            (urgent["avg_risk"] - normal["avg_risk"]) / normal["avg_risk"] * 100, 1
+        )
+
+    return {
+        "without_urgency": normal,
+        "with_urgency":    urgent,
+        "risk_diff_pct":   risk_diff_pct,
+        "high_risk_urgency_bills": high_risk_urgency_bills,
+    }
+
+
+# ── Party cohesion (viz 7) ──────────────────────────────────────────────────
+# Spec used WHERE COUNT() — invalid; that's a HAVING. Otherwise straight
+# join: parties → legislators → cluster, ranked by cohesion_score, with the
+# distinct cluster set per party so we can flag fragmented (3+) parties as
+# Centrão signals.
+
+_PARTY_COHESION_SQL = text("""
+SELECT
+    p.id::text                                AS id,
+    p.acronym                                 AS acronym,
+    p.cohesion_score                          AS cohesion_score,
+    COUNT(l.id)                               AS member_count,
+    AVG(l.party_discipline_score)             AS avg_discipline,
+    AVG(l.const_alignment_score)              AS avg_const_alignment,
+    -- distinct clusters present in this party's delegation
+    ARRAY_AGG(DISTINCT bc.label) FILTER (WHERE bc.label IS NOT NULL) AS clusters_present
+FROM parties p
+JOIN legislators l ON l.nominal_party_id = p.id
+LEFT JOIN behavioral_clusters bc ON l.behavioral_cluster_id = bc.id
+WHERE p.cohesion_score IS NOT NULL
+GROUP BY p.id, p.acronym, p.cohesion_score
+HAVING COUNT(l.id) >= 5
+ORDER BY p.cohesion_score DESC
+""")
+
+
+@router.get("/party-cohesion")
+async def party_cohesion(db: Annotated[AsyncSession, Depends(get_db)]):
+    """
+    Parties ranked by internal cohesion (how uniformly members vote with
+    their leadership). Includes the distinct-cluster set so the frontend
+    can flag fragmented parties (3+ clusters present) as a Centrão signal.
+    """
+    rows = (await db.execute(_PARTY_COHESION_SQL)).mappings().all()
+    return {
+        "items": [
+            {
+                "id":              r["id"],
+                "acronym":         r["acronym"],
+                "cohesion_score":  float(r["cohesion_score"]) if r["cohesion_score"] is not None else None,
+                "member_count":    r["member_count"],
+                "avg_discipline":  float(r["avg_discipline"]) if r["avg_discipline"] is not None else None,
+                "avg_const_alignment": float(r["avg_const_alignment"]) if r["avg_const_alignment"] is not None else None,
+                "clusters_present":    list(r["clusters_present"] or []),
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
+
+
+# ── Political temperature (viz 8) ───────────────────────────────────────────
+# Dashboard widget — multiple unrelated scalar aggregates so a single SELECT
+# with a Cartesian-product FROM clause (as the spec drafted) would produce
+# the wrong numbers. Decompose into independent scalar subqueries via four
+# separate small queries; cheap and correct.
+
+_TEMP_SCALARS_SQL = text("""
+SELECT
+    (SELECT COUNT(*) FROM bills
+     WHERE updated_at > NOW() - INTERVAL '30 days')                AS bills_active_30d,
+    (SELECT COUNT(*) FROM bills
+     WHERE urgency_regime = TRUE
+       AND status ILIKE '%tramita%')                                AS bills_in_urgency_now,
+    (SELECT COUNT(*) FROM bills
+     WHERE const_risk_score > 0.6
+       AND status ILIKE '%tramita%')                                AS high_risk_in_progress,
+    (SELECT AVG(party_discipline_score) FROM legislators
+     WHERE party_discipline_score IS NOT NULL)                      AS avg_discipline_now,
+    (SELECT COUNT(*) FROM votes
+     WHERE voted_at > NOW() - INTERVAL '30 days')                   AS votes_last_30d,
+    (SELECT COUNT(*) FROM behavioral_clusters)                      AS active_coalitions
+""")
+
+_TEMP_RECENT_BILLS_SQL = text("""
+SELECT
+    b.id::text                                AS id,
+    b.type                                    AS type,
+    b.number                                  AS number,
+    b.year                                    AS year,
+    b.title                                   AS title,
+    b.const_risk_score                        AS const_risk_score,
+    b.urgency_regime                          AS urgency_regime,
+    b.status                                  AS status,
+    COUNT(v.id)                               AS vote_count,
+    MAX(v.voted_at)                           AS last_vote
+FROM bills b
+JOIN votes v ON v.bill_id = b.id
+WHERE v.voted_at > NOW() - INTERVAL '90 days'
+GROUP BY b.id, b.type, b.number, b.year, b.title,
+         b.const_risk_score, b.urgency_regime, b.status
+ORDER BY MAX(v.voted_at) DESC NULLS LAST
+LIMIT 5
+""")
+
+
+@router.get("/political-temperature")
+async def political_temperature(db: Annotated[AsyncSession, Depends(get_db)]):
+    """
+    "Termômetro" dashboard: scalar activity counts + the 5 most recently
+    active bills. Used as a quick-glance widget at the bottom of /analises.
+    """
+    scalars = (await db.execute(_TEMP_SCALARS_SQL)).mappings().one()
+    bills   = (await db.execute(_TEMP_RECENT_BILLS_SQL)).mappings().all()
+    return {
+        "bills_active_30d":     scalars["bills_active_30d"],
+        "bills_in_urgency_now": scalars["bills_in_urgency_now"],
+        "high_risk_in_progress": scalars["high_risk_in_progress"],
+        "avg_discipline_now":   float(scalars["avg_discipline_now"]) if scalars["avg_discipline_now"] is not None else None,
+        "votes_last_30d":       scalars["votes_last_30d"],
+        "active_coalitions":    scalars["active_coalitions"],
+        "recent_bills": [
+            {
+                "id":               r["id"],
+                "type":             r["type"],
+                "number":           r["number"],
+                "year":             r["year"],
+                "title":            r["title"],
+                "const_risk_score": float(r["const_risk_score"]) if r["const_risk_score"] is not None else None,
+                "urgency_regime":   bool(r["urgency_regime"]),
+                "status":           r["status"],
+                "vote_count":       r["vote_count"],
+                "last_vote":        r["last_vote"].isoformat() if r["last_vote"] else None,
+            }
+            for r in bills
+        ],
+    }

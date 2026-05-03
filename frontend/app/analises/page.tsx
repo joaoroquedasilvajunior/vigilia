@@ -1,15 +1,23 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import {
+  getConstitutionalRiskByCluster,
   getDisciplineAlignmentScatter,
   getDonorVoteHeatmap,
+  getPartyCohesion,
+  getPoliticalTemperature,
   getSimilarVoters,
   getStateProfiles,
   getStats,
+  getUrgencyRegime,
+  type ClusterRiskRow,
   type DonorVoteHeatmap,
+  type PartyCohesionRow,
+  type PoliticalTemperatureResponse,
   type ScatterPoint,
   type SimilarVoter,
   type StateProfile,
+  type UrgencyResponse,
 } from "@/lib/api";
 import ScatterDisciplineAlignment from "@/components/analises/ScatterDisciplineAlignment";
 import DonorVoteHeatmapView from "@/components/analises/DonorVoteHeatmap";
@@ -17,6 +25,10 @@ import StateMap from "@/components/analises/StateMap";
 import SimilarVotersExamples, {
   type ExampleResult,
 } from "@/components/analises/SimilarVotersExamples";
+import ConstitutionalRiskByCluster from "@/components/analises/ConstitutionalRiskByCluster";
+import UrgencyRegime from "@/components/analises/UrgencyRegime";
+import PartyCohesion from "@/components/analises/PartyCohesion";
+import PoliticalTemperature from "@/components/analises/PoliticalTemperature";
 
 // Hand-picked exemplars for the "exemplo ao vivo" section. Chosen to span
 // the political spectrum (PSOL · PSB · PL) and party sizes; updating an
@@ -46,8 +58,9 @@ const SIMILAR_EXAMPLES = [
 export const metadata: Metadata = {
   title: "Análises",
   description:
-    "Visualizações analíticas dos votos da 57ª Legislatura — disciplina " +
-    "partidária, alinhamento constitucional, coalizões reais.",
+    "8 visualizações originais sobre o comportamento do Congresso Nacional " +
+    "brasileiro: disciplina partidária, risco constitucional, financiadores " +
+    "e coalizões.",
 };
 
 export const dynamic = "force-dynamic";
@@ -57,32 +70,65 @@ function fmtBR(n: number): string {
 }
 
 export default async function AnalisesPage() {
-  const [scatterRes, heatmapRes, statesRes, similarResults, statsRes] =
-    await Promise.all([
-      getDisciplineAlignmentScatter().catch(() => ({
-        items: [] as ScatterPoint[],
-        total: 0,
-      })),
-      getDonorVoteHeatmap().catch(
-        () => ({ sectors: [], themes: [], cells: [] }) as DonorVoteHeatmap,
-      ),
-      getStateProfiles().catch(() => ({
-        items: [] as StateProfile[],
-        total: 0,
-      })),
-      // Pull top similar voters for each example deputy in parallel. A failed
-      // fetch for one deputy returns an empty match list — the component
-      // hides empty examples cleanly rather than rendering a stub card.
-      Promise.all(
-        SIMILAR_EXAMPLES.map(async (d) => {
-          const r = await getSimilarVoters(d.id).catch(
-            () => ({ items: [] as SimilarVoter[] }),
-          );
-          return { deputy: d, matches: r.items.slice(0, 3) } as ExampleResult;
-        }),
-      ),
-      getStats().catch(() => null),
-    ]);
+  const [
+    scatterRes,
+    heatmapRes,
+    statesRes,
+    similarResults,
+    riskByClusterRes,
+    urgencyRes,
+    cohesionRes,
+    temperatureRes,
+    statsRes,
+  ] = await Promise.all([
+    getDisciplineAlignmentScatter().catch(() => ({
+      items: [] as ScatterPoint[],
+      total: 0,
+    })),
+    getDonorVoteHeatmap().catch(
+      () => ({ sectors: [], themes: [], cells: [] }) as DonorVoteHeatmap,
+    ),
+    getStateProfiles().catch(() => ({
+      items: [] as StateProfile[],
+      total: 0,
+    })),
+    Promise.all(
+      SIMILAR_EXAMPLES.map(async (d) => {
+        const r = await getSimilarVoters(d.id).catch(
+          () => ({ items: [] as SimilarVoter[] }),
+        );
+        return { deputy: d, matches: r.items.slice(0, 3) } as ExampleResult;
+      }),
+    ),
+    getConstitutionalRiskByCluster().catch(() => ({
+      items: [] as ClusterRiskRow[],
+      total: 0,
+    })),
+    getUrgencyRegime().catch(
+      () => ({
+        without_urgency: null,
+        with_urgency: null,
+        risk_diff_pct: null,
+        high_risk_urgency_bills: [],
+      }) as UrgencyResponse,
+    ),
+    getPartyCohesion().catch(() => ({
+      items: [] as PartyCohesionRow[],
+      total: 0,
+    })),
+    getPoliticalTemperature().catch(
+      () => ({
+        bills_active_30d: 0,
+        bills_in_urgency_now: 0,
+        high_risk_in_progress: 0,
+        avg_discipline_now: null,
+        votes_last_30d: 0,
+        active_coalitions: 0,
+        recent_bills: [],
+      }) as PoliticalTemperatureResponse,
+    ),
+    getStats().catch(() => null),
+  ]);
 
   const points = scatterRes.items;
   const totalVotes = statsRes?.votes ?? 0;
@@ -305,13 +351,118 @@ export default async function AnalisesPage() {
           </p>
         </section>
 
-        {/* ── Future visualizations placeholder ────────────────────── */}
+        {/* ── Section separator ────────────────────────────────────── */}
+        <div className="mt-14 mb-10 flex items-center gap-4" aria-hidden>
+          <span className="h-px flex-1 bg-ochre/40" />
+          <span className="font-display text-xs uppercase tracking-widest text-ochre font-bold">
+            ✦
+          </span>
+          <span className="h-px flex-1 bg-ochre/40" />
+        </div>
+
+        {/* ── Visualization 5: Constitutional risk by cluster ──────── */}
+        <section>
+          <header className="mb-6 max-w-3xl">
+            <p className="font-display text-xs uppercase tracking-widest text-ochre font-bold">
+              Análise · 5 de 8
+            </p>
+            <h2 className="font-display text-2xl sm:text-3xl font-bold text-brasilia mt-2 leading-tight">
+              Risco constitucional por coalizão
+            </h2>
+            <p className="mt-3 text-text-warm leading-relaxed">
+              Para cada coalizão comportamental, qual a proporção de votos
+              &quot;sim&quot; em projetos sinalizados como de alto risco
+              constitucional pelo nosso analisador.
+            </p>
+          </header>
+          <ConstitutionalRiskByCluster rows={riskByClusterRes.items} />
+        </section>
+
+        {/* ── Section separator ────────────────────────────────────── */}
+        <div className="mt-14 mb-10 flex items-center gap-4" aria-hidden>
+          <span className="h-px flex-1 bg-ochre/40" />
+          <span className="font-display text-xs uppercase tracking-widest text-ochre font-bold">
+            ✦
+          </span>
+          <span className="h-px flex-1 bg-ochre/40" />
+        </div>
+
+        {/* ── Visualization 6: Urgency regime ──────────────────────── */}
+        <section>
+          <header className="mb-6 max-w-3xl">
+            <p className="font-display text-xs uppercase tracking-widest text-ochre font-bold">
+              Análise · 6 de 8
+            </p>
+            <h2 className="font-display text-2xl sm:text-3xl font-bold text-brasilia mt-2 leading-tight">
+              Regime de urgência
+            </h2>
+            <p className="mt-3 text-text-warm leading-relaxed">
+              Comparativo entre projetos votados em tramitação normal e
+              projetos com regime de urgência aprovado — e a lista das
+              proposições de alto risco que pegaram o atalho.
+            </p>
+          </header>
+          <UrgencyRegime data={urgencyRes} />
+        </section>
+
+        {/* ── Section separator ────────────────────────────────────── */}
+        <div className="mt-14 mb-10 flex items-center gap-4" aria-hidden>
+          <span className="h-px flex-1 bg-ochre/40" />
+          <span className="font-display text-xs uppercase tracking-widest text-ochre font-bold">
+            ✦
+          </span>
+          <span className="h-px flex-1 bg-ochre/40" />
+        </div>
+
+        {/* ── Visualization 7: Party cohesion ──────────────────────── */}
+        <section>
+          <header className="mb-6 max-w-3xl">
+            <p className="font-display text-xs uppercase tracking-widest text-ochre font-bold">
+              Análise · 7 de 8
+            </p>
+            <h2 className="font-display text-2xl sm:text-3xl font-bold text-brasilia mt-2 leading-tight">
+              Coesão interna dos partidos
+            </h2>
+            <p className="mt-3 text-text-warm leading-relaxed">
+              Partidos ordenados por quanto seus deputados seguem a mesma
+              orientação de voto. Quando a delegação se distribui por três
+              ou mais coalizões comportamentais, é o sinal clássico do
+              Centrão — mesma legenda, comportamentos opostos.
+            </p>
+          </header>
+          <PartyCohesion rows={cohesionRes.items} />
+        </section>
+
+        {/* ── Section separator ────────────────────────────────────── */}
+        <div className="mt-14 mb-10 flex items-center gap-4" aria-hidden>
+          <span className="h-px flex-1 bg-ochre/40" />
+          <span className="font-display text-xs uppercase tracking-widest text-ochre font-bold">
+            ✦
+          </span>
+          <span className="h-px flex-1 bg-ochre/40" />
+        </div>
+
+        {/* ── Visualization 8: Political temperature ──────────────── */}
+        <section>
+          <header className="mb-6 max-w-3xl">
+            <p className="font-display text-xs uppercase tracking-widest text-ochre font-bold">
+              Análise · 8 de 8
+            </p>
+            <h2 className="font-display text-2xl sm:text-3xl font-bold text-brasilia mt-2 leading-tight">
+              Termômetro do Congresso
+            </h2>
+            <p className="mt-3 text-text-warm leading-relaxed">
+              Atividade legislativa recente — atualizada diariamente.
+            </p>
+          </header>
+          <PoliticalTemperature data={temperatureRes} />
+        </section>
+
+        {/* ── Footer note ──────────────────────────────────────────── */}
         <section className="mt-14 text-center text-text-warm">
           <p className="text-sm">
-            Próximas visualizações em desenvolvimento:
-          </p>
-          <p className="text-xs mt-2">
-            ausência · coesão partidária · risco constitucional · timeline
+            8 visualizações · todas atualizadas com sincronização diária da
+            API da Câmara dos Deputados.
           </p>
         </section>
       </div>
