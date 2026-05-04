@@ -401,6 +401,18 @@ async def sync_votes_for_bill_principal(bill_camara_id: int) -> dict:
                 await db.execute(stmt)
                 inserted += 1
 
+            # Refresh denormalized last_vote_at — same fix as sync_votes_for_bill,
+            # was missing here so backfill jobs left bills.last_vote_at NULL even
+            # after votes.voted_at was correctly populated.
+            await db.execute(
+                sa_text(
+                    "UPDATE bills SET last_vote_at = "
+                    "(SELECT MAX(voted_at) FROM votes WHERE bill_id = :bid) "
+                    "WHERE id = :bid"
+                ),
+                {"bid": bill.id},
+            )
+
             await db.commit()
 
     result = {
