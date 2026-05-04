@@ -35,6 +35,28 @@ def _parse_date(value):
     return value if not hasattr(value, "date") else value.date()
 
 
+def _parse_datetime(value):
+    """Coerce an API datetime value to a Python datetime, or None.
+
+    votes.voted_at is TIMESTAMP WITHOUT TIME ZONE — passing a raw string
+    raises an asyncpg type error. Câmara returns either a date-only
+    ('2023-07-06') or a full ISO timestamp ('2023-05-16T20:05:38'),
+    sometimes with a trailing 'Z'. Be lenient about all three.
+    """
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            # Strip trailing Z (UTC marker) — column is TIMESTAMP WITHOUT
+            # TIME ZONE, so we can't carry tz info anyway.
+            return datetime.fromisoformat(value.rstrip("Z"))
+        except ValueError:
+            return None
+    return None
+
+
 async def _upsert_party_by_acronym(session, acronym: str) -> str | None:
     """Ensure a party row exists; return its UUID."""
     if not acronym:
@@ -256,14 +278,14 @@ async def sync_votes_for_bill(bill_camara_id: int) -> None:
                     session_id=session_id,
                     vote_value=v["vote_value"],
                     party_orientation=v.get("party_orientation"),
-                    voted_at=v.get("voted_at"),
+                    voted_at=_parse_datetime(v.get("voted_at")),
                     followed_party_line=followed,
                 ).on_conflict_do_update(
                     index_elements=["legislator_id", "bill_id"],
                     set_={
                         "vote_value": v["vote_value"],
                         "party_orientation": v.get("party_orientation"),
-                        "voted_at": v.get("voted_at"),
+                        "voted_at": _parse_datetime(v.get("voted_at")),
                         "followed_party_line": followed,
                     },
                 )
@@ -365,14 +387,14 @@ async def sync_votes_for_bill_principal(bill_camara_id: int) -> dict:
                     session_id=session_id,
                     vote_value=v["vote_value"],
                     party_orientation=v.get("party_orientation"),
-                    voted_at=v.get("voted_at"),
+                    voted_at=_parse_datetime(v.get("voted_at")),
                     followed_party_line=followed,
                 ).on_conflict_do_update(
                     index_elements=["legislator_id", "bill_id"],
                     set_={
                         "vote_value": v["vote_value"],
                         "party_orientation": v.get("party_orientation"),
-                        "voted_at": v.get("voted_at"),
+                        "voted_at": _parse_datetime(v.get("voted_at")),
                         "followed_party_line": followed,
                     },
                 )
