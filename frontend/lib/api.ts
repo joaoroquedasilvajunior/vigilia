@@ -207,6 +207,32 @@ export const getBills = (params?: {
 
 export const getBill = (id: string) => apiFetch<Bill>(`/bills/${id}`);
 
+export interface NaoVoter {
+  id: string;
+  name: string;
+  party: string | null;
+  state: string | null;
+  cluster: string | null;
+  photo_url: string | null;
+}
+export interface BillVotes {
+  bill_id: string;
+  outcome: "approved" | "rejected" | "pending";
+  status: string | null;
+  summary: {
+    sim: number;
+    não: number;
+    abstencao: number;
+    obstrucao: number;
+    ausente: number;
+    other: number;
+    total: number;
+  };
+  nao_voters: NaoVoter[];
+}
+export const getBillVotes = (id: string) =>
+  apiFetch<BillVotes>(`/bills/${id}/votes`);
+
 export interface FeaturedBill {
   id?: string;
   camara_id: number;

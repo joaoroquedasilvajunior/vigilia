@@ -107,6 +107,97 @@ async def get_bill(
     return _serialize_bill(bill, full=True)
 
 
+# ── Vote breakdown ──────────────────────────────────────────────────────────
+# Powers the "Votação no Plenário" section on each bill detail page. Returns
+# the bucket totals plus the full list of "não" voters with party/UF/cluster
+# so the page can render an "X deputados que votaram NÃO" disclosure — the
+# headline question for high-profile bills (Dosimetria, etc).
+
+_BILL_VOTES_SQL = text("""
+SELECT
+    v.vote_value,
+    COUNT(*)                         AS count,
+    COALESCE(
+        ARRAY_AGG(
+            JSON_BUILD_OBJECT(
+                'id',       l.id::text,
+                'name',     COALESCE(l.display_name, l.name),
+                'party',    p.acronym,
+                'state',    l.state_uf,
+                'cluster',  bc.label,
+                'photo_url', l.photo_url
+            ) ORDER BY p.acronym NULLS LAST, COALESCE(l.display_name, l.name)
+        ) FILTER (WHERE v.vote_value = 'não'),
+        '{}'
+    ) AS nao_voters
+FROM votes v
+JOIN legislators l ON v.legislator_id = l.id
+LEFT JOIN parties p ON l.nominal_party_id = p.id
+LEFT JOIN behavioral_clusters bc ON l.behavioral_cluster_id = bc.id
+WHERE v.bill_id = :bill_id
+GROUP BY v.vote_value
+""")
+
+
+def _status_outcome(status: str | None) -> str:
+    """Same status→outcome map used by the homepage card. The Câmara status
+    is the source of truth for whether a bill became law — a multi-turn PEC
+    can have nao>sim in our votes table because we keep last-vote-per-deputy
+    while the bill itself was approved across destaques."""
+    if not status:
+        return "pending"
+    s = status.lower()
+    if any(k in s for k in ("transformad", "promulgad", "sancionad", "convertid", "aprovad")):
+        return "approved"
+    if any(k in s for k in ("rejeit", "arquiv")):
+        return "rejected"
+    return "pending"
+
+
+@router.get("/{bill_id}/votes")
+async def get_bill_votes(
+    bill_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    bill_row = (await db.execute(select(Bill).where(Bill.id == bill_id))).scalar_one_or_none()
+    if not bill_row:
+        raise HTTPException(404, "Projeto de lei não encontrado")
+
+    rows = (await db.execute(_BILL_VOTES_SQL, {"bill_id": bill_id})).all()
+
+    # Pivot vote_value rows into a flat summary, plus pull the "não" list out
+    # of whichever row carried it (the array_agg(... FILTER) guarantees only
+    # the 'não' row's array is non-empty — every other row gets an empty array).
+    summary = {"sim": 0, "não": 0, "abstencao": 0, "obstrucao": 0, "ausente": 0}
+    nao_voters: list[dict] = []
+    for r in rows:
+        if r.vote_value in summary:
+            summary[r.vote_value] = r.count
+        if r.nao_voters and len(r.nao_voters) > 0:
+            nao_voters = list(r.nao_voters)
+
+    total = sum(summary.values())
+    sim = summary["sim"]
+    nao = summary["não"]
+    other = summary["abstencao"] + summary["obstrucao"] + summary["ausente"]
+
+    return {
+        "bill_id":        str(bill_id),
+        "outcome":        _status_outcome(bill_row.status),
+        "status":         bill_row.status,
+        "summary": {
+            "sim":         sim,
+            "não":         nao,
+            "abstencao":   summary["abstencao"],
+            "obstrucao":   summary["obstrucao"],
+            "ausente":     summary["ausente"],
+            "other":       other,
+            "total":       total,
+        },
+        "nao_voters":     nao_voters,
+    }
+
+
 def _serialize_bill(b: Bill, *, full: bool = False) -> dict:
     data = {
         "id": str(b.id),

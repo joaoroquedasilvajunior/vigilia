@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getBill } from "@/lib/api";
+import { getBill, getBillVotes, type BillVotes } from "@/lib/api";
+import BillVotesSection from "@/components/projetos/BillVotes";
 
 export async function generateMetadata({
   params,
@@ -123,8 +124,14 @@ export default async function BillDetailPage({
   const { id } = await params;
 
   let bill;
+  let votes: BillVotes | null = null;
   try {
-    bill = await getBill(id);
+    [bill, votes] = await Promise.all([
+      getBill(id),
+      // The vote endpoint can fail independently — treat it as optional so
+      // the bill page still renders even if the votes table query times out.
+      getBillVotes(id).catch(() => null),
+    ]);
   } catch {
     notFound();
   }
@@ -205,6 +212,13 @@ export default async function BillDetailPage({
             </p>
           </div>
         </section>
+      )}
+
+      {/* Vote breakdown */}
+      {votes && (
+        <div className="mb-8">
+          <BillVotesSection data={votes} />
+        </div>
       )}
 
       {/* Affected articles */}
