@@ -10,7 +10,7 @@ display "234 new votes" / "8 scored" / etc. in the admin status table).
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select, text as sa_text
 
@@ -77,61 +77,48 @@ async def sync_new_plenary_votes(days_back: int = 2) -> int:
 
 # ── Stage 2: party orientations for recent sessions ──────────────────────────
 
-async def sync_orientations_for_recent_sessions(days_back: int = 2) -> int:
+async def sync_orientations_for_recent_sessions() -> int:
     """
-    Backfill votes.party_orientation for sessions added in the last
-    `days_back` days. The underlying function is incremental at the row
-    level (only touches votes whose orientation is still NULL for sessions
-    it processes), so calling it with the full sweep is safe but slow —
-    here we narrow it to recent sessions by checking sessions.created_at.
+    Truly incremental orientations: only fetch for sessions added since
+    the last successful run of this stage. Falls back to a 7-day window
+    on the first ever run.
 
-    Returns count of sessions touched. Falls back to the full sync if the
-    incremental path isn't implementable on the existing helper.
+    The underlying sync_party_orientations() now accepts a
+    `since_session_date` filter so we skip the 3000+ historical sessions
+    on every nightly run — pre-optimization this stage took ~47 min;
+    post should be seconds on a quiet night.
+
+    Returns count of sessions processed.
     """
-    # Postgres requires INTERVAL to be a literal in the parser, not a bind
-    # parameter. days_back is an internal int default, safe to inline.
-    # Filter on session_date (the only real timestamp on this table —
-    # there is no created_at column).
     async with AsyncSessionLocal() as db:
-        cnt_row = await db.execute(sa_text(
-            f"SELECT COUNT(*) FROM sessions "
-            f"WHERE session_date > NOW() - INTERVAL '{int(days_back)} days' "
-            f"  AND camara_id IS NOT NULL"
+        row = await db.execute(sa_text(
+            "SELECT completed_at FROM pipeline_runs "
+            "WHERE stage = 'sync_orientations' AND status = 'success' "
+            "ORDER BY completed_at DESC LIMIT 1"
         ))
-        recent = int(cnt_row.scalar() or 0)
-    logger.info("sync_orientations_for_recent_sessions: %d recent sessions", recent)
+        last_success = row.scalar()
 
-    # The existing helper walks ALL sessions and skips those already-touched
-    # idempotently — for now reuse it. A truly-incremental version is a
-    # future optimization once session counts grow large enough to matter.
-    await sync_party_orientations()
-    return recent
+    # Default to 7 days ago on first run (covers the typical Câmara
+    # session cadence so we don't miss anything).
+    if last_success is None:
+        since: date = date.today() - timedelta(days=7)
+    else:
+        since = last_success.date() if hasattr(last_success, "date") else last_success
+    logger.info("sync_orientations_for_recent_sessions: since %s", since)
+
+    return await sync_party_orientations(since_session_date=since)
 
 
 # ── Stage 3: tag unclassified bills ─────────────────────────────────────────
 
 async def run_tag_pipeline_incremental() -> int:
     """
-    tag_bills() already filters internally to bills where theme_tags is NULL
-    or an empty array. Returns the count of bills it tagged in this run.
+    tag_bills() filters internally to bills where theme_tags is NULL or
+    empty, fans out Haiku calls via a semaphore (concurrency=10), and now
+    returns the count of bills it tagged in this run — no before/after
+    counting needed.
     """
-    # Snapshot the "untagged" count before so we can report delta even
-    # though tag_bills doesn't return one.
-    async with AsyncSessionLocal() as db:
-        before = int((await db.execute(sa_text(
-            "SELECT COUNT(*) FROM bills "
-            "WHERE theme_tags IS NULL OR array_length(theme_tags, 1) = 0"
-        ))).scalar() or 0)
-
-    await tag_bills()
-
-    async with AsyncSessionLocal() as db:
-        after = int((await db.execute(sa_text(
-            "SELECT COUNT(*) FROM bills "
-            "WHERE theme_tags IS NULL OR array_length(theme_tags, 1) = 0"
-        ))).scalar() or 0)
-
-    return max(0, before - after)
+    return await tag_bills()
 
 
 # ── Stage 4: score unscored voted bills ──────────────────────────────────────

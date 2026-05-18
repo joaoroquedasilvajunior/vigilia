@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from datetime import date
 
 from sqlalchemy import select, text, update
 
@@ -96,24 +97,37 @@ async def _load_party_lookup(db) -> tuple[dict[str, str], list[str]]:
     return lookup, list(lookup.keys())
 
 
-async def sync_party_orientations(rate_limit_sleep: float = 0.4) -> None:
+async def sync_party_orientations(
+    rate_limit_sleep: float = 0.4,
+    since_session_date: "date | None" = None,
+) -> int:
     """
     Walk every distinct (session_id, sessions.camara_id) referenced by votes,
     fetch its orientations from Câmara, and UPDATE votes.party_orientation
     for legislators currently affiliated with each matched party.
 
     Idempotent: re-running just overwrites with the same values.
+
+    When `since_session_date` is provided, restricts the scan to sessions
+    whose session_date >= that date — used by the nightly pipeline to do
+    an incremental sweep instead of re-fetching every historical session.
+
+    Returns the count of sessions processed.
     """
-    logger.info("sync_party_orientations: starting")
+    logger.info(
+        "sync_party_orientations: starting (since=%s)",
+        since_session_date or "all",
+    )
 
     async with AsyncSessionLocal() as db:
         party_id_by_acro, party_acronyms = await _load_party_lookup(db)
-        rows = (
-            await db.execute(
-                select(Session.id, Session.camara_id)
-                .where(Session.id.in_(select(Vote.session_id).distinct()))
-            )
-        ).all()
+        stmt = (
+            select(Session.id, Session.camara_id)
+            .where(Session.id.in_(select(Vote.session_id).distinct()))
+        )
+        if since_session_date is not None:
+            stmt = stmt.where(Session.session_date >= since_session_date)
+        rows = (await db.execute(stmt)).all()
         sessions_to_process = [(str(r.id), r.camara_id) for r in rows if r.camara_id]
 
     logger.info(
@@ -202,6 +216,7 @@ async def sync_party_orientations(rate_limit_sleep: float = 0.4) -> None:
         "matched_rows=%d skipped_rows=%d",
         processed, votes_updated, matched_orient_rows, skipped_orient_rows,
     )
+    return processed
 
 
 if __name__ == "__main__":
