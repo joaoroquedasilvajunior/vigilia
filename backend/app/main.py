@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.api.v1.routes import analysis, bills, clusters, farol, legislators, stats, sync
+from app.api.v1.routes import analysis, bills, clusters, farol, legislators, pipeline, stats, sync
 from app.core.config import settings
 from app.db import AsyncSessionLocal
 
@@ -26,6 +26,20 @@ _FAST_STARTUP_DDL = [
     # the /political-temperature dashboard. bills.updated_at is touched
     # on every nightly metadata sync and can't serve as a "recent" signal.
     "ALTER TABLE bills ADD COLUMN IF NOT EXISTS last_vote_at TIMESTAMP",
+    # pipeline_runs — append-only log of every stage execution from the
+    # nightly orchestrator. Backs both /pipeline/status and the
+    # compute_clusters gating logic (which checks the last successful
+    # cluster run's timestamp to decide whether to re-run).
+    """CREATE TABLE IF NOT EXISTS pipeline_runs (
+        id                 UUID PRIMARY KEY,
+        stage              VARCHAR(50) NOT NULL,
+        started_at         TIMESTAMP   NOT NULL,
+        completed_at       TIMESTAMP,
+        records_processed  INTEGER     DEFAULT 0,
+        status             VARCHAR(20) NOT NULL,
+        error              TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_pipeline_runs_stage_started ON pipeline_runs (stage, started_at DESC)",
 ]
 
 _BACKGROUND_BACKFILL_SQL = """
@@ -95,6 +109,7 @@ app.include_router(sync.router, prefix="/api/v1")
 app.include_router(clusters.router, prefix="/api/v1")
 app.include_router(stats.router, prefix="/api/v1")
 app.include_router(analysis.router, prefix="/api/v1")
+app.include_router(pipeline.router, prefix="/api/v1")
 
 
 async def _post_startup_migrations() -> None:

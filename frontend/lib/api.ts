@@ -233,6 +233,19 @@ export interface BillVotes {
 export const getBillVotes = (id: string) =>
   apiFetch<BillVotes>(`/bills/${id}/votes`);
 
+// Pipeline status (admin/pipeline page)
+export interface PipelineStage {
+  stage: string;
+  status: "success" | "failed" | "never";
+  started_at: string | null;
+  completed_at: string | null;
+  duration_seconds: number | null;
+  records_processed: number;
+  error: string | null;
+}
+export const getPipelineStatus = () =>
+  apiFetch<{ stages: PipelineStage[] }>(`/pipeline/status`);
+
 export interface FeaturedBill {
   id?: string;
   camara_id: number;

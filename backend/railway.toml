@@ -7,3 +7,16 @@ healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
+
+# ── Nightly pipeline ─────────────────────────────────────────────────────────
+# The orchestrator runs as a separate Railway "cron" service that shares this
+# Dockerfile but uses a different start command. Create the service in the
+# Railway dashboard with:
+#   - Source:        this same backend/ directory
+#   - Start command: python -m app.pipeline.orchestrator
+#   - Cron schedule: 0 6 * * *      (03:00 BRT = 06:00 UTC)
+#   - Env vars:      copy from the API service (DATABASE_URL, ANTHROPIC_API_KEY,
+#                    CAMARA_*, etc.)
+# Manual / dev fallback:
+#   curl -X POST https://vigilia-api-production.up.railway.app/api/v1/pipeline/run \
+#        -H "x-sync-secret: $SUPABASE_SERVICE_ROLE_KEY"
