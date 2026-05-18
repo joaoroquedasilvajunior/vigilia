@@ -88,10 +88,15 @@ async def sync_orientations_for_recent_sessions(days_back: int = 2) -> int:
     Returns count of sessions touched. Falls back to the full sync if the
     incremental path isn't implementable on the existing helper.
     """
+    # Postgres requires INTERVAL to be a literal in the parser, not a bind
+    # parameter — `INTERVAL $1` raises a syntax error. days_back is an
+    # internal default (int), so safe to inline via f-string.
     async with AsyncSessionLocal() as db:
         cnt_row = await db.execute(sa_text(
-            "SELECT COUNT(*) FROM sessions WHERE created_at > NOW() - INTERVAL :i AND camara_id IS NOT NULL"
-        ), {"i": f"{days_back} days"})
+            f"SELECT COUNT(*) FROM sessions "
+            f"WHERE created_at > NOW() - INTERVAL '{int(days_back)} days' "
+            f"  AND camara_id IS NOT NULL"
+        ))
         recent = int(cnt_row.scalar() or 0)
     logger.info("sync_orientations_for_recent_sessions: %d recent sessions", recent)
 
