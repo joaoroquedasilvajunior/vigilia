@@ -89,12 +89,13 @@ async def sync_orientations_for_recent_sessions(days_back: int = 2) -> int:
     incremental path isn't implementable on the existing helper.
     """
     # Postgres requires INTERVAL to be a literal in the parser, not a bind
-    # parameter — `INTERVAL $1` raises a syntax error. days_back is an
-    # internal default (int), so safe to inline via f-string.
+    # parameter. days_back is an internal int default, safe to inline.
+    # Filter on session_date (the only real timestamp on this table —
+    # there is no created_at column).
     async with AsyncSessionLocal() as db:
         cnt_row = await db.execute(sa_text(
             f"SELECT COUNT(*) FROM sessions "
-            f"WHERE created_at > NOW() - INTERVAL '{int(days_back)} days' "
+            f"WHERE session_date > NOW() - INTERVAL '{int(days_back)} days' "
             f"  AND camara_id IS NOT NULL"
         ))
         recent = int(cnt_row.scalar() or 0)
